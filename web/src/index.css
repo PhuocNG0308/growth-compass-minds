@@ -1,0 +1,135 @@
+@import 'tailwindcss';
+
+@custom-variant dark (&:is(.dark *));
+
+/* A phone in landscape is wider than 768px but still a phone. Deciding the layout on
+   width alone hands it the desktop chrome and drops the safe area. Ask the pointer. */
+@custom-variant desktop (@media (min-width: 768px) and (hover: hover) and (pointer: fine));
+@custom-variant touch (@media (hover: none) and (pointer: coarse));
+
+:root {
+  --radius: 0.625rem;
+
+  /* 60 — neutral canvas, near-zero chroma so long sessions stay easy on the eyes */
+  --background: #f2f4f2;
+  /* 30 — surfaces that carry content */
+  --card: #ffffff;
+  --popover: #ffffff;
+  --secondary: #e8ece9;
+  --muted: #e8ece9;
+  --accent: #e4ebe5;
+  /* 10 — sage, reserved for the primary action and for data that matters.
+     Dark enough that a 20% tint of itself still clears AA for text sitting on it. */
+  --primary: #445c4b;
+
+  --foreground: #16201a;
+  --card-foreground: #16201a;
+  --popover-foreground: #16201a;
+  --secondary-foreground: #16201a;
+  --muted-foreground: #566459;
+  --accent-foreground: #3a5240;
+  --primary-foreground: #ffffff;
+
+  --destructive: #b03a3f;
+  --destructive-foreground: #ffffff;
+  --warning: #725019;
+  --warning-foreground: #ffffff;
+
+  --border: #dbe1dc;
+  --input: #d3dbd5;
+  --ring: #445c4b;
+}
+
+.dark {
+  --background: #121613;
+  --card: #1a1f1c;
+  --popover: #1a1f1c;
+  --secondary: #232a25;
+  --muted: #232a25;
+  --accent: #26302a;
+
+  --primary: #a3c4a8;
+
+  --foreground: #e6ebe7;
+  --card-foreground: #e6ebe7;
+  --popover-foreground: #e6ebe7;
+  --secondary-foreground: #e6ebe7;
+  --muted-foreground: #9aa89e;
+  --accent-foreground: #c2d8c6;
+  --primary-foreground: #14231a;
+
+  --destructive: #ef8a8a;
+  --destructive-foreground: #2a0e0e;
+  --warning: #dfb367;
+  --warning-foreground: #241a02;
+
+  --border: #2b332e;
+  --input: #333d36;
+  --ring: #a3c4a8;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --font-sans: 'Geist Sans', Geist, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'Geist Mono', ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, monospace;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  html {
+    background-color: var(--background);
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: 1.0625rem;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .tabular {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* notch and home indicator, on every edge — landscape puts them on the sides */
+  .safe-x {
+    padding-left: max(env(safe-area-inset-left), 0px);
+    padding-right: max(env(safe-area-inset-right), 0px);
+  }
+
+  .safe-b {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}

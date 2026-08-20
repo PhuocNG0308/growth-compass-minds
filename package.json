@@ -1,0 +1,27 @@
+{
+  "name": "growth-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "preview": "npm run build:web && tsx dev/preview.ts",
+    "build:web": "npm --prefix web run build",
+    "start": "tsx src/index.ts",
+    "migrate": "tsx src/db/migrate.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@animocabrands/minds-client-lib": "^0.1.3",
+    "@hono/node-server": "^1.19.7",
+    "hono": "^4.13.3",
+    "postgres": "^3.4.9",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "tsx": "^4.23.12",
+    "typescript": "^7.0.2"
+  }
+}

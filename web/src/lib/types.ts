@@ -13,7 +13,11 @@ export type Me = {
   title: string;
   connectedAt: string;
   reachThrough: string | null;
+  lastSyncAt: string | null;
+  syncFailing: boolean;
+  demo: boolean;
   mindEnabled: boolean;
+  repliesEnabled: boolean;
   counts: Counts;
 };
 
@@ -55,7 +59,19 @@ export type Rule = {
   promotable: boolean;
 };
 
+export type ScoredExperiment = {
+  id: string;
+  lever: string;
+  hypothesis: string;
+  verdict: Verdict | null;
+  closedAt: string;
+  predictedCtr: number | null;
+  actualCtr: number | null;
+  ctrDelta: number | null;
+};
+
 export type Ledger = {
+  scores: ScoredExperiment[];
   channel: { id: string; ytChannelId: string; title: string };
   openExperiments: OpenExperiment[];
   settledExperiments: SettledExperiment[];
@@ -75,6 +91,18 @@ export type Activity = {
   ytVideoId: string | null;
 };
 
+export type Concept = {
+  label: string;
+  hypothesis: string;
+  prediction: Prediction;
+};
+
+export type ExperimentPayload = {
+  lever: string;
+  ytVideoId: string | null;
+  concepts: Concept[];
+};
+
 export type Proposal = {
   id: string;
   kind: 'title' | 'thumbnail' | 'hook' | 'reply' | 'experiment' | 'community';
@@ -82,23 +110,10 @@ export type Proposal = {
   detail: string;
   rationale: string;
   options: string[];
+  payload: ExperimentPayload | null;
   createdAt: string;
   videoTitle: string | null;
   thumbnailUrl: string | null;
-};
-
-export type VideoRow = {
-  ytVideoId: string;
-  title: string;
-  thumbnailUrl: string | null;
-  publishedAt: string;
-  durationS: number | null;
-  views: number | null;
-  impressions: number | null;
-  ctrPct: number | null;
-  avgViewPct: number | null;
-  avgViewDurationS: number | null;
-  subscribersGained: number | null;
 };
 
 export type Snapshot = {
@@ -148,13 +163,42 @@ export type QueuedComment = {
   segment: Segment;
 };
 
-export type Audience = { superfans: Superfan[]; queue: QueuedComment[] };
+export type Audience = {
+  superfans: Superfan[];
+  segmentCounts: Partial<Record<Segment, number>>;
+  queue: QueuedComment[];
+};
 
 export type Segment = 'superfan' | 'potential' | 'newcomer';
+
+export type TimelineEvent = {
+  at: string;
+  kind: string;
+  automated: boolean;
+  refId: string;
+  title: string;
+  detail: Record<string, unknown>;
+};
+
+export type Accuracy = {
+  graded: number;
+  meanAbsCtrError: number | null;
+  meanAbsAvpError: number | null;
+  recentAbsCtrError: number | null;
+  earlierAbsCtrError: number | null;
+};
+
+export type Timeline = {
+  events: TimelineEvent[];
+  accuracy: Accuracy;
+  totals: { sessions: number; automated: number; tenets: number };
+};
 
 export type PostComment = {
   ytCommentId: string;
   ytAuthorId: string;
+  repliedAt: string | null;
+  replyText: string | null;
   text: string;
   likeCount: number;
   publishedAt: string;
@@ -176,6 +220,7 @@ export type FeedPost = {
   avgViewPct: number | null;
   subscribersGained: number | null;
   commentCount: number;
+  trajectory: number[];
   topComments: PostComment[];
 };
 
@@ -183,6 +228,7 @@ export type PostDetail = {
   post: FeedPost & { avgViewDurationS: number | null };
   comments: PostComment[];
   retention: { points: RetentionPoint[]; steepestDropOffs: Array<{ ratio: number; drop: number }> } | null;
+  history: Snapshot[];
 };
 
 export type ChatTurn = { role: 'creator' | 'mind'; text: string; at: string };
@@ -197,6 +243,22 @@ export type ChatThreadDigest = {
   lastBody: string;
 };
 
+export type ChatHit = {
+  threadId: string;
+  title: string;
+  subjectKind: 'video' | 'viewer' | 'segment' | 'channel';
+  subjectId: string;
+  role: 'creator' | 'mind';
+  body: string;
+  createdAt: string;
+};
+
+export type ReplyTarget = PostComment & {
+  videoTitle: string;
+  ytVideoId: string;
+  thumbnailUrl: string | null;
+};
+
 export type Mention = { kind: 'viewer' | 'segment' | 'video' | 'experiment'; id: string };
 export type Suggestion = { kind: string; id: string; label: string; detail: string };
 
@@ -207,6 +269,7 @@ export type ViewerProfileData = {
     commentCount: number;
     firstSeenAt: string;
     lastSeenAt: string;
+    tenureDays: number;
     segment: Segment;
     videosTouched: number;
     totalLikes: number;

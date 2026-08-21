@@ -29,7 +29,9 @@ export function StatGrid({ stats }: { stats: Stat[] }) {
         >
           <div
             className={cn(
-              'tabular text-3xl leading-tight font-medium tracking-tight',
+              // proportional figures: tabular-nums is for columns that align, and equal-width
+              // digits make a large standalone number read loose
+              'text-3xl leading-tight font-medium tracking-tight',
               stat.lead && 'text-primary',
               stat.alert && 'text-warning',
             )}

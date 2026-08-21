@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { AskPanel } from '@/components/ask-panel';
 import { Card } from '@/components/ui/card';
-import { Chips, Empty, List, Loading, SectionTitle } from '@/components/shell';
+import { Chips, Empty, Failed, List, Loading, SectionTitle } from '@/components/shell';
 import { RetentionChart } from '@/components/retention';
+import { Trend, type TrendPoint } from '@/components/trend';
 import { Thumb } from '@/components/thumb';
 import { CommentLine } from '@/pages/feed';
 import { api } from '@/lib/api';
@@ -11,7 +12,7 @@ import { useFormat } from '@/lib/format';
 import { useI18n } from '@/lib/i18n';
 import { useAsync } from '@/lib/use-async';
 import { cn, focusRing } from '@/lib/utils';
-import type { PostComment } from '@/lib/types';
+import type { PostComment, Snapshot } from '@/lib/types';
 
 const FILTERS = ['all', 'superfan', 'potential', 'question', 'criticism'] as const;
 type Filter = (typeof FILTERS)[number];
@@ -22,16 +23,17 @@ function keep(comment: PostComment, filter: Filter) {
   return comment.triage === filter;
 }
 
-export function Post({ ytVideoId }: { ytVideoId: string }) {
+export function Post({ ytVideoId, focusAsk }: { ytVideoId: string; focusAsk?: boolean }) {
   const { t } = useI18n();
   const f = useFormat();
   const [filter, setFilter] = useState<Filter>('all');
-  const { data, loading, error } = useAsync(() => api.post(ytVideoId), [ytVideoId]);
+  const [round, setRound] = useState(0);
+  const { data, loading, error } = useAsync(() => api.post(ytVideoId), [ytVideoId, round]);
 
-  if (loading) return <Loading />;
-  if (error || !data) return <Empty>{t('state.error')}</Empty>;
+  if (loading) return <Loading rows={3} />;
+  if (error || !data) return <Failed onRetry={() => setRound((n) => n + 1)} />;
 
-  const { post, comments, retention } = data;
+  const { post, comments, retention, history } = data;
   const shown = comments.filter((comment) => keep(comment, filter));
 
   return (
@@ -70,15 +72,19 @@ export function Post({ ytVideoId }: { ytVideoId: string }) {
           chat: () => api.chat(ytVideoId),
         }}
         suggestions={SUGGESTIONS}
+        autoFocus={focusAsk}
       />
 
-      {retention && (
-        <>
-          <SectionTitle>{t('section.retention')}</SectionTitle>
-          <div className="border-y">
-            <RetentionChart retention={retention} durationS={post.durationS} />
-          </div>
-        </>
+      <SectionTitle>{t('section.trajectory')}</SectionTitle>
+      <Trajectory history={history} />
+
+      <SectionTitle>{t('section.retention')}</SectionTitle>
+      {retention ? (
+        <div className="border-y">
+          <RetentionChart retention={retention} durationS={post.durationS} />
+        </div>
+      ) : (
+        <Empty>{t('empty.retention')}</Empty>
       )}
 
       <div className="mt-6 mb-3 flex items-center justify-between gap-3">
@@ -108,6 +114,49 @@ export function Post({ ytVideoId }: { ytVideoId: string }) {
     </>
   );
 }
+
+const METRICS = ['views', 'ctrPct', 'avgViewPct'] as const;
+type Metric = (typeof METRICS)[number];
+
+// the snapshot column names differ from the metric labels the rest of the app uses
+const FIELD: Record<Metric, 'views' | 'ctr' | 'avgViewPct'> = {
+  views: 'views',
+  ctrPct: 'ctr',
+  avgViewPct: 'avgViewPct',
+};
+
+/**
+ * One metric at a time. Views and CTR on shared axes would need two y-scales, and the gap
+ * between them is arbitrary — the chart would imply a relationship the data never showed.
+ */
+function Trajectory({ history }: { history: Snapshot[] }) {
+  const { t } = useI18n();
+  const f = useFormat();
+  const [metric, setMetric] = useState<Metric>('views');
+
+  const points: TrendPoint[] = [...history]
+    .sort((a, b) => a.ageHours - b.ageHours)
+    .map((snapshot) => ({ label: age(snapshot.ageHours), value: snapshot[FIELD[metric]] }));
+
+  return (
+    <div className="border-y py-5">
+      <Chips
+        options={METRICS.map((key) => ({ key, label: t(`metric.${key}`) }))}
+        value={metric}
+        onChange={(key) => setMetric(key as Metric)}
+      />
+      <Trend
+        points={points}
+        caption={`${t(`metric.${metric}`)} — ${t('chart.trajectory')}`}
+        format={(value) =>
+          value == null ? '' : metric === 'views' ? f.int(Math.round(value)) : f.pct(value)
+        }
+      />
+    </div>
+  );
+}
+
+const age = (hours: number) => (hours < 48 ? `${hours}h` : `${Math.round(hours / 24)}d`);
 
 function Cell({ label, value }: { label: string; value: string }) {
   return (

@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { MessageCircle, Sparkles } from 'lucide-react';
+import { CornerDownRight, MessageCircle, Sparkles } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
-import { Chips, Empty, Loading } from '@/components/shell';
-import { Thumb } from '@/components/thumb';
+import { Chips, Empty, Failed, Loading } from '@/components/shell';
+import { Sparkline, Thumb } from '@/components/thumb';
 import { api } from '@/lib/api';
 import { useFormat } from '@/lib/format';
 import { useI18n } from '@/lib/i18n';
@@ -20,16 +20,23 @@ const RANGES = [
 export function Feed() {
   const { t } = useI18n();
   const [range, setRange] = useState<(typeof RANGES)[number][0]>('all');
-  const { data, loading, error } = useAsync(() => api.feed(), []);
+  const [round, setRound] = useState(0);
+  const { data, loading, error } = useAsync(() => api.feed(), [round]);
 
-  if (loading) return <Loading />;
-  if (error) return <Empty>{t('state.error')}</Empty>;
+  if (loading) return <Loading rows={3} />;
+  if (error) return <Failed onRetry={() => setRound((n) => n + 1)} />;
   if (!data?.length) return <Empty>{t('empty.videos')}</Empty>;
 
   const cutoff = RANGES.find(([key]) => key === range)![1];
   const posts = cutoff
     ? data.filter((post) => Date.now() - new Date(post.publishedAt).getTime() < cutoff * 86_400_000)
     : data;
+
+  // "good" is what this channel usually does, not a number from a blog post
+  const benchmark = {
+    ctrPct: median(data.map((post) => post.ctrPct)),
+    avgViewPct: median(data.map((post) => post.avgViewPct)),
+  };
 
   return (
     <>
@@ -41,7 +48,9 @@ export function Feed() {
 
       <div className="space-y-5">
         {posts.length ? (
-          posts.map((post) => <PostCard key={post.ytVideoId} post={post} />)
+          posts.map((post) => (
+            <PostCard key={post.ytVideoId} post={post} benchmark={benchmark} />
+          ))
         ) : (
           <Empty>{t('empty.range')}</Empty>
         )}
@@ -50,24 +59,37 @@ export function Feed() {
   );
 }
 
+function median(values: Array<number | null>): number | null {
+  const sorted = values.filter((value): value is number => value != null).sort((a, b) => a - b);
+  if (sorted.length === 0) return null;
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle]! : (sorted[middle - 1]! + sorted[middle]!) / 2;
+}
+
 /** Laid out the way a social post reads: header, media, reaction summary, a couple of replies. */
-function PostCard({ post }: { post: FeedPost }) {
+function PostCard({
+  post,
+  benchmark,
+}: {
+  post: FeedPost;
+  benchmark: { ctrPct: number | null; avgViewPct: number | null };
+}) {
   const { t } = useI18n();
   const f = useFormat();
-  const open = () => {
-    location.hash = `#/post/${encodeURIComponent(post.ytVideoId)}`;
+  const open = (ask = false) => {
+    location.hash = `#/post/${encodeURIComponent(post.ytVideoId)}${ask ? '/ask' : ''}`;
   };
 
   const hidden = post.commentCount - post.topComments.length;
 
   return (
     <Card className="gap-0 overflow-hidden rounded-2xl py-0">
-      <button onClick={open} className={cn(focusRing, 'w-full px-4 pt-4 pb-3 text-left @md:px-5')}>
+      <button onClick={() => open()} className={cn(focusRing, 'w-full px-4 pt-4 pb-3 text-left @md:px-5')}>
         <p className="text-lg leading-snug font-semibold @md:text-xl">{post.title}</p>
         <p className="text-muted-foreground mt-1 text-sm">{f.since(post.publishedAt)}</p>
       </button>
 
-      <button onClick={open} className={cn(focusRing, 'block w-full')}>
+      <button onClick={() => open()} className={cn(focusRing, 'block w-full')}>
         <Thumb
           url={post.thumbnailUrl}
           title={post.title}
@@ -87,11 +109,29 @@ function PostCard({ post }: { post: FeedPost }) {
           )}
         </span>
 
-        <span className="flex gap-2">
-          <Badge variant="secondary" className={cn('text-xs', rank(post.ctrPct, 5))}>
+        <span className="flex items-center gap-3">
+          {post.trajectory.length > 2 && (
+            <span
+              role="img"
+              aria-label={t('feed.shape')}
+              title={t('feed.shape')}
+              className="hidden w-28 shrink-0 @md:block"
+            >
+              <Sparkline points={post.trajectory} />
+            </span>
+          )}
+          <Badge
+            variant="secondary"
+            className={cn('text-xs', rank(post.ctrPct, benchmark.ctrPct))}
+            title={label(t, f, benchmark.ctrPct)}
+          >
             {t('metric.ctrPct')} {f.pct(post.ctrPct, 1)}
           </Badge>
-          <Badge variant="secondary" className={cn('text-xs', rank(post.avgViewPct, 40))}>
+          <Badge
+            variant="secondary"
+            className={cn('text-xs', rank(post.avgViewPct, benchmark.avgViewPct))}
+            title={label(t, f, benchmark.avgViewPct)}
+          >
             {t('metric.avgViewPct')} {f.pct(post.avgViewPct)}
           </Badge>
         </span>
@@ -99,14 +139,14 @@ function PostCard({ post }: { post: FeedPost }) {
 
       <div className="grid grid-cols-2 border-t">
         <button
-          onClick={open}
+          onClick={() => open()}
           className={cn(focusRing, 'text-muted-foreground hover:bg-accent hover:text-foreground flex items-center justify-center gap-2 py-3 text-sm font-medium')}
         >
           <MessageCircle className="size-4" />
           {t('feed.comments')}
         </button>
         <button
-          onClick={open}
+          onClick={() => open(true)}
           className={cn(focusRing, 'text-primary hover:bg-accent flex items-center justify-center gap-2 border-l py-3 text-sm font-medium')}
         >
           <Sparkles className="size-4" />
@@ -121,7 +161,7 @@ function PostCard({ post }: { post: FeedPost }) {
           ))}
           {hidden > 0 && (
             <button
-              onClick={open}
+              onClick={() => open()}
               className={cn(focusRing, 'text-muted-foreground hover:text-primary w-full px-4 pb-4 text-left text-sm font-medium @md:px-5')}
             >
               {t('feed.moreComments', { n: hidden })}
@@ -133,12 +173,19 @@ function PostCard({ post }: { post: FeedPost }) {
   );
 }
 
-const rank = (value: number | null, benchmark: number) =>
-  value == null
+const rank = (value: number | null, benchmark: number | null) =>
+  value == null || benchmark == null
     ? 'text-muted-foreground'
     : value >= benchmark
       ? 'bg-primary/15 text-primary'
       : 'bg-destructive/12 text-destructive';
+
+/** Colour alone never says what the comparison is; the tooltip names the benchmark. */
+const label = (
+  t: ReturnType<typeof useI18n>['t'],
+  f: ReturnType<typeof useFormat>,
+  benchmark: number | null,
+) => (benchmark == null ? '' : `${t('bench.median')}: ${f.pct(benchmark, 1)}`);
 
 export const SEGMENT_STYLE: Record<string, string> = {
   superfan: 'bg-primary/20 text-primary',
@@ -156,6 +203,7 @@ export function SegmentBadge({ segment }: { segment: Segment }) {
 }
 
 export function CommentLine({ comment, compact }: { comment: PostComment; compact?: boolean }) {
+  const { t } = useI18n();
   const f = useFormat();
   const profile = `#/viewer/${encodeURIComponent(comment.ytAuthorId)}`;
 
@@ -179,6 +227,20 @@ export function CommentLine({ comment, compact }: { comment: PostComment; compac
           <p className="mt-1 text-[15px] leading-relaxed">{comment.text}</p>
         </div>
         <p className="text-muted-foreground mt-1 px-1 text-xs">{f.since(comment.publishedAt)}</p>
+
+        {comment.repliedAt && (
+          <div className="mt-2 flex gap-2 pl-4">
+            <CornerDownRight className="text-muted-foreground mt-1 size-4 shrink-0" />
+            <div className="min-w-0">
+              <p className="text-muted-foreground text-xs font-medium">
+                {t('comment.youReplied', { when: f.since(comment.repliedAt) })}
+              </p>
+              {comment.replyText && (
+                <p className="text-muted-foreground mt-1 text-sm text-pretty">{comment.replyText}</p>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

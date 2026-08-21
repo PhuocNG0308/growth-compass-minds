@@ -1,137 +1,122 @@
-import { FlaskConical, Moon, Play, Sun } from 'lucide-react';
-import { useState } from 'react';
-import { Button } from '@/components/ui/button';
+import { FlaskConical } from 'lucide-react';
 import { Rail } from '@/components/rail';
 import { Shell } from '@/components/shell';
 import { Audience } from '@/pages/audience';
+import { Chats } from '@/pages/chats';
 import { Feed } from '@/pages/feed';
 import { Inbox } from '@/pages/inbox';
 import { Lab } from '@/pages/lab';
+import { Memory } from '@/pages/memory';
+import { Landing } from '@/pages/landing';
 import { Post } from '@/pages/post';
 import { ViewerProfile } from '@/pages/viewer';
+import { MobileShell } from '@/mobile/shell';
+import { MobileAudience, MobileChats } from '@/mobile/pages/audience';
+import { MobileFeed } from '@/mobile/pages/feed';
+import { MobileInbox } from '@/mobile/pages/inbox';
+import { MobileLanding } from '@/mobile/pages/landing';
+import { MobileMemory } from '@/mobile/pages/memory';
+import { MobilePost } from '@/mobile/pages/post';
+import { MobileTests } from '@/mobile/pages/tests';
+import { useIsMobile } from '@/mobile/use-mobile';
 import { api, NotConnected } from '@/lib/api';
-import { LOCALES, useI18n } from '@/lib/i18n';
-import { currentTheme, setTheme } from '@/lib/theme';
+import { useI18n } from '@/lib/i18n';
 import { useAsync, useHash } from '@/lib/use-async';
-import { cn } from '@/lib/utils';
+import type { Me } from '@/lib/types';
 
+const ROUTES = ['#/', '#/inbox', '#/lab', '#/memory', '#/audience', '#/chats'];
+
+// screens reached from a tab keep that tab lit, so the nav never goes blank under you
+const OWNER: Record<string, string> = { '#/chats': '#/inbox' };
+
+/**
+ * Phone and desktop are two builds of the same product, not one layout squeezed. They share
+ * the data layer, the strings and the formatters; the information architecture is where they
+ * part company, so the split happens here and each side stays readable on its own.
+ */
 export default function App() {
   const hash = useHash();
+  const mobile = useIsMobile();
   const { data: me, error, loading } = useAsync(() => api.me(), []);
   const mode = useAsync(() => api.mode(), []);
-  const preview = mode.data?.preview === true;
-  const liveMind = mode.data?.liveMind === true;
 
-  if (loading) return <div className="grid min-h-dvh place-items-center text-muted-foreground">…</div>;
-  if (!me) {
-    return (
-      <>
-        <PreviewBanner show={preview} live={liveMind} />
-        <Gate error={error instanceof NotConnected ? null : (error?.message ?? null)} />
-      </>
-    );
+  if (loading || mode.loading) {
+    return <div className="grid min-h-dvh place-items-center text-muted-foreground">…</div>;
   }
 
-  const detail = /^#\/post\/(.+)$/.exec(hash);
-  const person = /^#\/viewer\/(.+)$/.exec(hash);
-  const route = detail ? '#/' : person ? '#/audience' : ROUTES.includes(hash) ? hash : '#/';
+  if (!me) {
+    const gate = {
+      googleConfigured: mode.data?.googleConfigured ?? false,
+      demoAvailable: mode.data?.demo ?? false,
+      serverDown: mode.data === null || (error !== null && !(error instanceof NotConnected)),
+    };
+    return mobile ? <MobileLanding {...gate} /> : <Landing {...gate} />;
+  }
 
-  return (
-    <Shell
-      me={me}
-      route={route}
-      banner={<PreviewBanner show={preview} live={liveMind} />}
-      rail={<Rail me={me} />}
-    >
-      {detail ? (
-        <Post ytVideoId={decodeURIComponent(detail[1]!)} />
-      ) : person ? (
-        <ViewerProfile ytAuthorId={decodeURIComponent(person[1]!)} />
-      ) : route === '#/inbox' ? (
-        <Inbox me={me} />
-      ) : route === '#/lab' ? (
-        <Lab me={me} />
-      ) : route === '#/audience' ? (
-        <Audience />
-      ) : (
-        <Feed />
-      )}
+  const detail = /^#\/post\/([^/]+)(\/ask)?$/.exec(hash);
+  const person = /^#\/viewer\/(.+)$/.exec(hash);
+  const route = detail
+    ? '#/'
+    : person
+      ? '#/audience'
+      : ROUTES.includes(hash)
+        ? (OWNER[hash] ?? hash)
+        : '#/';
+
+  const view = { hash, route, detail, person, me };
+
+  return mobile ? (
+    <MobileShell me={me} route={route} banner={<DemoBanner show={me.demo} />}>
+      <MobileScreen {...view} />
+    </MobileShell>
+  ) : (
+    <Shell me={me} route={route} banner={<DemoBanner show={me.demo} />} rail={<Rail me={me} />}>
+      <DesktopScreen {...view} />
     </Shell>
   );
 }
 
-const ROUTES = ['#/', '#/inbox', '#/lab', '#/audience'];
+type View = {
+  hash: string;
+  route: string;
+  detail: RegExpExecArray | null;
+  person: RegExpExecArray | null;
+  me: Me;
+};
 
-function PreviewBanner({ show, live }: { show: boolean; live?: boolean }) {
+function DesktopScreen({ hash, route, detail, person, me }: View) {
+  if (detail) return <Post ytVideoId={decodeURIComponent(detail[1]!)} focusAsk={Boolean(detail[2])} />;
+  if (person) return <ViewerProfile ytAuthorId={decodeURIComponent(person[1]!)} />;
+  if (hash === '#/chats') return <Chats />;
+  if (route === '#/inbox') return <Inbox me={me} />;
+  if (route === '#/lab') return <Lab me={me} />;
+  if (route === '#/memory') return <Memory />;
+  if (route === '#/audience') return <Audience />;
+  return <Feed />;
+}
+
+function MobileScreen({ hash, route, detail, person, me }: View) {
+  if (detail) {
+    return <MobilePost ytVideoId={decodeURIComponent(detail[1]!)} focusAsk={Boolean(detail[2])} />;
+  }
+  // the viewer profile is already one narrow column of rows; it needs no second build
+  if (person) return <ViewerProfile ytAuthorId={decodeURIComponent(person[1]!)} />;
+  if (hash === '#/chats') return <MobileChats />;
+  if (route === '#/inbox') return <MobileInbox me={me} />;
+  if (route === '#/lab') return <MobileTests me={me} />;
+  if (route === '#/memory') return <MobileMemory />;
+  if (route === '#/audience') return <MobileAudience />;
+  return <MobileFeed />;
+}
+
+function DemoBanner({ show }: { show: boolean }) {
   const { t } = useI18n();
   if (!show) return null;
 
   return (
     <div className="bg-warning/15 text-warning flex items-center justify-center gap-2 px-4 py-2 text-center text-xs font-medium">
       <FlaskConical className="size-4" />
-      {live ? t('preview.liveMind') : t('preview.banner')}
-    </div>
-  );
-}
-
-function Gate({ error }: { error: string | null }) {
-  const { t, locale, setLocale } = useI18n();
-  const [theme, applyTheme] = useState(currentTheme);
-
-  return (
-    <div className="grid min-h-dvh place-items-center px-6 py-16">
-      <div className="w-full max-w-lg text-center">
-        <span className="bg-primary mx-auto mb-7 grid size-14 place-items-center rounded-2xl">
-          <Play className="text-primary-foreground size-7 fill-current" />
-        </span>
-
-        <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">{t('gate.title')}</h1>
-        <p className="mt-4 mb-9 text-lg text-muted-foreground">{t('gate.lede')}</p>
-
-        <Button
-          size="lg"
-          className="h-13 w-full max-w-sm text-base"
-          onClick={() => window.open('/auth/youtube', 'connect', 'width=520,height=700')}
-        >
-          <Play className="fill-current" />
-          {t('gate.connect')}
-        </Button>
-
-        <p className="mt-5 text-sm text-muted-foreground">{t('gate.readOnly')}</p>
-        {error && <p className="text-destructive mt-4 text-sm">{error}</p>}
-
-        <div className="mt-10 flex items-center justify-center gap-2">
-          <div className="flex items-center rounded-lg border p-1">
-            {LOCALES.map(([code, label]) => (
-              <button
-                key={code}
-                onClick={() => setLocale(code)}
-                aria-pressed={code === locale}
-                className={cn(
-                  'rounded-md px-3 py-1 text-xs font-semibold transition-colors',
-                  code === locale
-                    ? 'bg-primary text-primary-foreground'
-                    : 'text-muted-foreground hover:text-foreground',
-                )}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <Button
-            variant="outline"
-            size="icon"
-            aria-label={t('shell.theme')}
-            onClick={() => {
-              const next = theme === 'dark' ? 'light' : 'dark';
-              setTheme(next);
-              applyTheme(next);
-            }}
-          >
-            {theme === 'dark' ? <Sun /> : <Moon />}
-          </Button>
-        </div>
-      </div>
+      {t('demo.banner')}
     </div>
   );
 }

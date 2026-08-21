@@ -2,6 +2,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import * as repo from '../db/repo.ts';
+import { SEGMENT_THRESHOLDS } from '../memory/segments.ts';
 import { env } from '../env.ts';
 import { buildContext } from '../memory/context.ts';
 import { describe } from '../memory/learnings.ts';
@@ -192,6 +193,17 @@ mindRoutes.post('/learnings/:id/promoted', async (c) => {
   return c.json(describe(learning));
 });
 
+/** Same rule as opening an experiment directly: a prediction with no number is not one. */
+const numericPrediction = z
+  .record(z.string(), z.number())
+  .refine((prediction) => Object.keys(prediction).length > 0, 'predict at least one number');
+
+const conceptBody = z.object({
+  label: z.string().min(3).max(140),
+  hypothesis: z.string().min(10),
+  prediction: numericPrediction,
+});
+
 const proposalBody = z.object({
   channelId: z.string(),
   ytVideoId: z.string().optional(),
@@ -200,12 +212,23 @@ const proposalBody = z.object({
   detail: z.string().min(5),
   rationale: z.string().min(10),
   options: z.array(z.string()).max(5).default([]),
+  experiment: z
+    .object({
+      lever: z.string().min(2),
+      ytVideoId: z.string().nullish(),
+      concepts: z.array(conceptBody).min(1).max(5),
+    })
+    .optional(),
 });
 
 mindRoutes.post('/proposals', async (c) => {
   const body = proposalBody.parse(await c.req.json());
   const channel = await requireChannel(body.channelId);
   const video = body.ytVideoId ? await repo.getVideo(body.ytVideoId) : undefined;
+
+  if (body.kind === 'experiment' && !body.experiment) {
+    throw new HttpError(400, 'an experiment proposal needs `experiment` with at least one concept');
+  }
 
   const proposal = await repo.createProposal({
     channelId: channel.id,
@@ -214,7 +237,11 @@ mindRoutes.post('/proposals', async (c) => {
     summary: body.summary,
     detail: body.detail,
     rationale: body.rationale,
-    options: body.options,
+    // the creator picks by label, so the options list has to mirror the concepts
+    options: body.experiment ? body.experiment.concepts.map((c) => c.label) : body.options,
+    payload: body.experiment
+      ? { ...body.experiment, ytVideoId: body.experiment.ytVideoId ?? body.ytVideoId ?? null }
+      : null,
   });
   return c.json(proposal, 201);
 });
@@ -260,5 +287,5 @@ mindRoutes.post('/comments/:ytCommentId/triage', async (c) => {
 
 mindRoutes.get('/channels/:id/superfans', async (c) => {
   const channel = await requireChannel(c.req.param('id'));
-  return c.json(await repo.superfans(channel.id));
+  return c.json(await repo.viewersBySegment(channel.id, SEGMENT_THRESHOLDS, 'superfan'));
 });

@@ -12,9 +12,12 @@ const schema = z.object({
   GOOGLE_CLIENT_SECRET: z.string().min(1),
   GOOGLE_REDIRECT_URI: z.url(),
   GROWTH_API_TOKEN: z.string().min(32),
+  PUBLIC_BASE_URL: z.url().optional(),
   MINDS_BUILDER_API_KEY: z.string().optional(),
   MIND_ID: z.string().optional(),
   MIND_CONVERSATION_ALIAS: z.string().default('growth'),
+  YOUTUBE_REPLIES: z.enum(['on', 'off']).default('on'),
+  DEMO_MODE: z.enum(['on', 'off']).default('off'),
   CHECKPOINT_POLL_MS: z.coerce.number().default(60_000),
 });
 
@@ -44,15 +47,26 @@ function degraded() {
   const patched = { ...process.env };
   for (const key of unsetEnv) patched[key] = standIn[key];
 
+  // spelling out only the consequences that actually apply, so the warning stays true
+  const consequence: Record<string, string> = {
+    DATABASE_URL: 'nothing can be stored or read',
+    ENCRYPTION_KEY: 'a throwaway key is generated each boot, so sessions end at restart',
+    GOOGLE_CLIENT_ID: 'connecting a YouTube channel will fail',
+    GOOGLE_CLIENT_SECRET: 'connecting a YouTube channel will fail',
+    GOOGLE_REDIRECT_URI: 'connecting a YouTube channel will fail',
+    GROWTH_API_TOKEN: 'the Mind cannot authenticate against /v1',
+  };
+
   console.warn(
     [
       '',
       `  Missing or invalid in .env: ${unsetEnv.join(', ')}`,
-      '  Copy .env.example to .env and fill them in — see docs/05-integration.md §6b.',
+      ...[...new Set(unsetEnv.map((key) => consequence[key]).filter(Boolean))].map(
+        (line) => `    - ${line}`,
+      ),
       '',
-      '  Booting with throwaway values. Connecting a channel and reading the ledger will fail,',
-      '  and ENCRYPTION_KEY is regenerated on every boot, so sessions end at restart.',
-      '  To browse the interface without any of this, run: npm run preview',
+      '  See docs/05-integration.md §6b. To browse the interface without Google,',
+      '  set DEMO_MODE=on and run: npm run seed:demo',
       '',
     ].join('\n'),
   );
@@ -61,3 +75,8 @@ function degraded() {
 }
 
 export const env = parsed.success ? parsed.data : degraded();
+
+const GOOGLE_KEYS = ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_REDIRECT_URI'];
+
+export const googleConfigured = !GOOGLE_KEYS.some((key) => unsetEnv.includes(key));
+export const demoEnabled = env.DEMO_MODE === 'on' && process.env.NODE_ENV !== 'production';

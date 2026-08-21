@@ -7,6 +7,8 @@ export type Channel = {
   refreshToken: string;
   reportingJobId: string | null;
   reachSyncedThrough: Date | null;
+  lastSyncAt: Date | null;
+  lastSyncError: string | null;
   createdAt: Date;
 };
 
@@ -83,6 +85,19 @@ export type Learning = {
 export const PROPOSAL_KINDS = ['title', 'thumbnail', 'hook', 'reply', 'experiment', 'community'] as const;
 export type ProposalKind = (typeof PROPOSAL_KINDS)[number];
 
+/** One concept the Mind is willing to be graded on. */
+export type Concept = {
+  label: string;
+  hypothesis: string;
+  prediction: Prediction;
+};
+
+export type ExperimentPayload = {
+  lever: string;
+  ytVideoId: string | null;
+  concepts: Concept[];
+};
+
 export type Proposal = {
   id: string;
   channelId: string;
@@ -92,6 +107,7 @@ export type Proposal = {
   detail: string;
   rationale: string;
   options: string[];
+  payload: ExperimentPayload | null;
   status: 'pending' | 'approved' | 'dismissed';
   decidedAt: Date | null;
   decidedChoice: string | null;

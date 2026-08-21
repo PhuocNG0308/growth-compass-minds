@@ -82,6 +82,25 @@ Hệ quả lên lịch checkpoint ([`src/types.ts`](../src/types.ts)):
 
 Bước 4→5 là chỗ vòng tròn khép lại: **hệ thống đánh thức Mind, Mind ghi lại điều nó học, bộ nhớ dày lên.**
 
+## 4b. Trả lời bình luận
+
+`comments.insert` với `parentId` **có thật** và tạo được reply. Nó cần scope `youtube.force-ssl`, tức scope ghi.
+
+Điều này đổi lời hứa, nên phải nói rõ: từ *"không ghi được gì"* thành *"không gì được đăng cho tới khi creator bấm Gửi"*. Ràng buộc thật nằm ở API — **không có đường nào cho Mind tự đăng**. `POST /api/comments/{id}/draft` chỉ trả về văn bản; chỉ `POST /api/comments/{id}/reply` mới gọi YouTube, và nó chỉ chạy từ một cú bấm của người.
+
+Tắt hoàn toàn bằng `YOUTUBE_REPLIES=off` — khi đó scope ghi cũng không được xin ở màn đồng ý.
+
+Hàng đợi xếp theo cách creator thật sự phân loại: **người quay lại nhiều nhất trước**, rồi tới bình luận được khán giả thích nhiều, rồi mới tới thời gian.
+
+### Donate — không có API
+
+| Muốn | Trạng thái |
+|---|---|
+| Super Chat | `superChatEvents` **đã bị gỡ khỏi tài liệu** (trang trả 404) |
+| Thành viên trả phí | `members.list` còn, nhưng cần scope `youtube.channel-memberships.creator` **và Google phải duyệt allowlist thủ công** — không kịp trong 8 ngày |
+
+Nên không ưu tiên theo tiền được. Thay bằng tín hiệu ta tự tính: tần suất bình luận, thời gian gắn bó, lượt thích mà bình luận nhận được.
+
 ## 5. Ba loại khoá — ai cấp, ai giữ, đi hướng nào
 
 Rất dễ nhầm ba thứ này. Chúng đi **ba hướng khác nhau**:
@@ -423,29 +442,128 @@ Hai lỗi khác cùng nhóm:
 npm install
 npm --prefix web install
 cp .env.example .env
-npm run migrate               # dựng schema
+npm run migrate               # áp các migration chưa chạy
+npm run db:check              # chạy thử toàn bộ truy vấn + kiểm index, constraint, view
 npm run build:web             # dựng giao diện ra web/dist
 npm run dev                   # http://localhost:8080
 ```
+
+### Dựng Postgres
+
+**Có Docker:** `docker compose up -d` rồi đặt
+`DATABASE_URL=postgres://growth:growth@127.0.0.1:5432/growth_compass`.
+
+**Không có Docker** (máy Windows chưa cài WSL — Docker Desktop sẽ cần `wsl --install` và **khởi động lại máy**): cài native, nhanh hơn nhiều.
+
+```powershell
+winget install --id PostgreSQL.PostgreSQL.17 --source winget --silent `
+  --override "--unattendedmodeui none --mode unattended --superpassword <pw> --serverport 5432"
+```
+
+Rồi tạo database và role riêng cho app — **đừng dùng `postgres` superuser cho ứng dụng**:
+
+```sql
+create role growth login password '<app-pw>';
+create database growth_compass owner growth;
+```
+
+### `npm run db:check` — vì sao cần
+
+Typecheck không chạy SQL. Toàn bộ truy vấn trong `repo.ts` và `chat.ts` có thể sai mà TypeScript vẫn xanh. [`dev/dbcheck.ts`](../dev/dbcheck.ts) gọi **từng hàm một** trên database thật với dữ liệu tạm rồi dọn sạch.
+
+Lần chạy đầu tiên: **50/52 đạt**. Hai cái hỏng là `searchChat` khi lọc theo tag:
+
+```
+input of anonymous composite types is not implemented
+```
+
+Nguyên nhân: `(r.kind, r.ref_id) in ${sql(pairs)}` — Postgres không dựng được row-constructor từ bind parameter. Sửa bằng cách đưa vào hai mảng song song rồi `unnest` ghép lại, cách này còn dùng được index `(kind, ref_id)`. Giờ **52/52**.
+
+Đây đúng là loại lỗi mà không chạy DB thật thì không bao giờ thấy.
 
 Khi làm giao diện, chạy `npm --prefix web run dev` để có hot reload (Vite proxy `/api` và `/auth` sang cổng 8080).
 
 Server tự nạp `.env` khi khởi động (`process.loadEnvFile`) — không cần thư viện dotenv.
 
-**Chỉ muốn xem giao diện — không cần Postgres, không cần Google:**
+### Vòng COMMIT — creator mở thí nghiệm
+
+Trước đây chỉ **Mind** mới mở được thí nghiệm (`POST /v1/experiments`); giao diện chỉ đọc. Nghĩa là đúng cái quyết định mà sản phẩm xoay quanh — creator chọn một concept và con số được ghi vào sổ — không có đường nào để bấm.
+
+Giờ `POST /v1/proposals` nhận thêm trường `experiment` khi `kind="experiment"`:
+
+```json
+{
+  "kind": "experiment",
+  "ytVideoId": "dQw4w9WgXcQ",
+  "summary": "...", "detail": "...", "rationale": "...",
+  "experiment": {
+    "lever": "hook",
+    "ytVideoId": "dQw4w9WgXcQ",
+    "concepts": [
+      { "label": "Cold open on the finished build",
+        "hypothesis": "Showing the result first holds the first thirty seconds.",
+        "prediction": { "avgViewPct": 48.2, "ctrPct": 6.1 } }
+    ]
+  }
+}
+```
+
+Mỗi concept **bắt buộc có ít nhất một con số** — cùng luật với `POST /v1/experiments`. Concept không kèm số bị từ chối ở biên, vì một đề xuất không dám đặt số thì sổ cái không dùng được.
+
+Creator bấm duyệt một concept → `POST /api/proposals/:id/decide` mở thí nghiệm với đúng `hypothesis` và `prediction` của concept đó, gắn video, và lên lịch t24/t72/t7d/t28d. Đi qua đúng `attachVideo` mà Mind dùng, nên trạng thái chuyển sang `measuring` giống hệt. Không có bảng mới, không có endpoint `/v1` mới.
+
+Cột mới: `proposals.payload jsonb` ([`005`](../src/db/migrations/005_proposal_payload.sql)). `options` vẫn là danh sách nhãn để phần giao diện cũ và `decided_choice` không đổi nghĩa.
+
+### Biểu đồ
+
+Bốn chỗ vẽ số, tất cả là SVG viết tay, **không thêm thư viện chart nào**:
+
+- **Quỹ đạo** trên trang video ([`trend.tsx`](../web/src/components/trend.tsx)) — views / CTR / phần trăm xem theo tuổi video, chọn từng chỉ số một.
+- **"Nó có khá hơn không?"** ở Tests — sai số tuyệt đối của từng dự đoán đã chấm, cũ trước, lấy từ view `experiment_scores`.
+- **Sparkline** trên thẻ feed — hình dạng tích luỹ lượt xem, chuẩn hoá theo đỉnh của chính video đó.
+- **Retention** trên trang video (đã có từ trước).
+
+Ba ràng buộc tự đặt, theo skill [`dataviz`](../.claude/skills/dataviz/SKILL.md):
+
+1. **Không bao giờ hai trục y.** Views và CTR khác thang đo hoàn toàn; gộp chung một khung thì khoảng cách giữa hai trục là tuỳ tiện và biểu đồ sẽ bịa ra một tương quan không có trong dữ liệu. Vì vậy trang video có chip đổi chỉ số chứ không có hai đường.
+2. **Một chuỗi, một màu.** Chạy validator của skill trên hai màu nhấn của hệ (`#445c4b` và `#b03a3f`) cho kết quả ΔE 2.0 dưới protanopia và 4.9 dưới deuteranopia — tức người mù màu đỏ-lục **không phân biệt được** sage với đỏ. Nên không biểu đồ nào dùng hai màu làm hai chuỗi. Mốc tham chiếu vẽ bằng hairline trung tính có nhãn trực tiếp.
+3. **Null không phải 0.** Thiếu số liệu thì đường đứt quãng, không nối qua. Chuỗi ≤ 12 điểm thì chấm rõ từng điểm quan sát, để không ai đọc một đường mượt thành nhiều bằng chứng hơn thực có.
+
+Mỗi biểu đồ có nút đổi sang **bảng**, và crosshair + tooltip chạy được cả bằng phím mũi tên.
+
+Ngưỡng "tốt/xấu" trên thẻ feed lấy **trung vị của chính kênh**, không phải hằng số. Trước đây là 5% CTR và 40% xem trung bình cắm cứng trong code, không nói cho ai biết mốc ở đâu ra.
+
+### Migration
+
+`src/db/migrations/*.sql`, áp theo thứ tự tên file, ghi vào bảng `schema_migrations`. Mỗi file chạy trong **một transaction riêng**, nên hỏng giữa chừng thì file đó không để lại gì; các file trước đó vẫn được ghi nhận. `pg_advisory_lock` chặn hai tiến trình cùng migrate. Chạy lại khi đã đủ thì in `schema already up to date`.
+
+| File | Nội dung |
+|---|---|
+| `001_baseline.sql` | schema gốc, giữ nguyên |
+| `002_integrity.sql` | index còn thiếu, `check` constraint cho các cột phân loại, unique cho `(video_id, age_hours)` và một đường cong retention mỗi ngày, đổi `chat_threads.alias` sang khoá theo kênh, thêm `channels.last_sync_at/last_sync_error` |
+| `003_views.sql` | `experiment_scores` (bóc predicted/actual ra khỏi jsonb) và `growth_timeline` (một dòng thời gian cho mọi thứ chạm vào bộ nhớ, cột `automated` đánh dấu việc tự xảy ra) |
+| `004_timeline_detail.sql` | `growth_timeline.detail` đổi từ text sang jsonb có cấu trúc, để giao diện tự viết câu theo ngôn ngữ đang bật thay vì nhúng tiếng Anh vào database |
+
+Thêm thay đổi mới thì tạo file `004_…` — **không sửa file đã áp**, vì `schema_migrations` sẽ bỏ qua nó.
+
+**Chỉ muốn xem giao diện — cần Postgres, không cần Google:**
 
 ```bash
 npm --prefix web install     # lần đầu
-npm run preview              # http://localhost:8081
+npm run migrate
+npm run seed:demo            # nạp kênh mẫu vào Postgres
+DEMO_MODE=on npm run dev
 ```
 
-Mở URL là **vào thẳng dashboard**, không có màn đăng nhập, không gọi Google.
+Màn hình đăng nhập có thêm hành động phụ **"Xem thử bằng dữ liệu mẫu"**. Bấm vào đó, xác nhận cảnh báo, và bạn vào kênh `UC_DEMO` bằng **đúng cookie phiên như luồng thật** — không có nhánh xác thực thứ hai, không có server giả. Mọi màn hình chạy qua đúng truy vấn SQL của bản production, nên nhìn thấy giao diện chạy ở đây là bằng chứng đường dữ liệu chạy.
 
-**Mind trong preview là Mind thật.** Nếu `MINDS_BUILDER_API_KEY` có trong `.env`, khung "Hỏi về video này" gọi đúng Mind của bạn với dữ liệu video mẫu — banner đổi thành *"Bản xem thử — video mẫu, Mind thật"*. Không có key thì nó phát lại một câu trả lời viết sẵn. Dữ liệu mẫu ở [`dev/fixtures.ts`](../dev/fixtures.ts): 8 video (mỗi video mở được trang chi tiết kèm đường retention), 3 thí nghiệm đang chạy, 4 đã kết luận, 3 Tenet, 4 claim đang gom bằng chứng, 5 khán giả quen, 4 comment chờ trả lời.
+`dev/seed-demo.ts` sinh dữ liệu ở quy mô thật: 24 video trải 9 tháng, 283 snapshot, 146 người xem đủ ba segment, 552 bình luận, 6 thí nghiệm (3 đã đóng, verdict suy ra từ chính con số), 20 checkpoint, 6 learning, 4 đề xuất, và vài luồng chat có sẵn để thấy Mind nhớ xuyên phiên. PRNG có seed cố định nên hình dạng kênh không đổi giữa các lần chạy; riêng dấu thời gian neo vào lúc seed để "2 giờ trước" không biến thành "9 ngày trước" sau một tuần.
 
-Giao diện có dải cảnh báo vàng ở đỉnh trang suốt thời gian chạy preview. Dùng nó để làm giao diện — **đừng** dùng nó để kết luận đường dữ liệu thật đã chạy.
+**Rào chắn:** `POST /api/sync` và `POST /api/comments/:id/reply` trả 403 `demo-read-only` trên kênh mẫu, và dải cảnh báo vàng nằm suốt trên Shell. `DEMO_MODE` bị ép về `off` khi `NODE_ENV=production`.
 
-Cả `npm run dev` lẫn `npm run preview` đều bind `0.0.0.0` và in ra địa chỉ LAN khi khởi động. Mở địa chỉ đó trên điện thoại cùng Wi-Fi để kiểm tra giao diện trên máy thật.
+**Mind trong chế độ mẫu là Mind thật.** Nếu `MINDS_BUILDER_API_KEY` có trong `.env`, khung "Hỏi về video này" gọi đúng Mind của bạn — dữ liệu mẫu, suy luận thật.
+
+`npm run dev` bind `0.0.0.0` và in ra địa chỉ LAN khi khởi động. Mở địa chỉ đó trên điện thoại cùng Wi-Fi để kiểm tra giao diện trên máy thật.
 
 Sinh hai secret (không cần openssl, chạy được trên Windows):
 
@@ -474,7 +592,7 @@ Không có hai giá trị này thì cửa sổ kết nối không thể hiện m
 
 ### Cửa sổ kết nối bật ra rồi tắt ngay?
 
-Đó là hành vi của `npm run preview` — nó không gọi Google, chỉ nạp dữ liệu mẫu. Giao diện có dải cảnh báo vàng ở đỉnh trang khi đang ở chế độ này. Muốn kết nối kênh thật thì chạy `npm run dev` với đủ credential ở trên.
+Nếu `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` chưa có trong `.env`, `/auth/youtube` **không** đẩy bạn sang Google nữa — nó trả về đúng lý do và màn hình đăng nhập nói thẳng biến nào còn thiếu. Trước đây nó redirect với `client_id=unset` và Google trả `401: invalid_client`, không nói gì thêm.
 
 ---
 
@@ -499,6 +617,8 @@ Một proposal gồm: `kind` (title / thumbnail / hook / reply / experiment / co
 
 Dán URL hoặc nội dung file này vào hội thoại với Mind thay vì mô tả bằng lời — Mind dựng Tool Schema chính xác hơn nhiều so với đọc văn xuôi.
 
+`servers` trong spec được sinh **lúc trả response**, lấy `PUBLIC_BASE_URL` nếu có, không thì lấy origin của chính request. Mind dựng tool schema từ trường này, nên nó phải là URL tuyệt đối mà Mind gọi tới được — mở tunnel rồi lấy spec qua đúng host của tunnel là spec tự mang host đó.
+
 ## 6e. Giới hạn API của YouTube — đã kiểm chứng
 
 | Muốn làm | Có API không |
@@ -507,6 +627,63 @@ Dán URL hoặc nội dung file này vào hội thoại với Mind thay vì mô 
 | Đọc/phân tích bài Community | **Không.** Data API v3 không có resource nào cho community post |
 | Tải transcript/caption | Có, nhưng `captions.download` đòi scope `youtube.force-ssl` — tức phá bỏ trạng thái chỉ-đọc |
 | Tự đổi title / thumbnail | Có, nhưng đòi scope ghi. **Đã cố ý không làm** — xem §6c |
+
+## 6f. Bootstrap Mind — `npm run mind`
+
+Soul, Tenets, Guardrails và Skills **chỉ định nghĩa được bằng hội thoại**. Builder API không có endpoint nào cho chúng, CLI cũng không. Nhưng hội thoại thì script được — và nếu không script, toàn bộ phần được chấm nặng nhất của dự án chỉ tồn tại trong lịch sử chat của một người.
+
+Nên các lượt của người vận hành nằm trong repo: [`dev/mind-bootstrap.ts`](../dev/mind-bootstrap.ts). Đây **không phải** file cấu hình Soul — nó là kịch bản hội thoại, gửi đi qua đúng đường messaging của client-lib.
+
+```bash
+npm run mind                     # trạng thái + checklist còn thiếu gì
+npm run mind script              # danh sách 12 lượt
+npm run mind show connect        # xem trước nội dung sẽ gửi (đã che token)
+npm run mind send soul guardrails
+npm run mind ask "Show me your Tenets"
+npm run mind history
+```
+
+Mỗi lần gửi, cả câu gửi lẫn câu trả lời được ghi vào [`docs/_evidence/mind-bootstrap.md`](_evidence/mind-bootstrap.md) — đây là bằng chứng cho tiêu chí #1, và `GROWTH_API_TOKEN` bị thay bằng placeholder trước khi ghi.
+
+Thứ tự 12 lượt: `soul` → `guardrails` → `connect` → sáu lượt `skill-*` → `autonomy` → `verify` → `guardrail-test`.
+
+### Đã chạy thật — 20–21/08
+
+| Lượt | Kết quả |
+|---|---|
+| `soul` | Mind ghi Soul, đọc lại vai trò và **tự nêu danh sách nó sẽ từ chối**. Đáng chú ý: nó nhắc lại ba thí nghiệm từ phiên trước (`cable-lie`, `monitor-arm`, `desk-rebuild`) mà không ai nạp lại context |
+| `guardrails` | Sáu invariant vào Soul dạng guardrail Tenet, đọc lại đủ sáu |
+| `guardrail-test` | Yêu cầu đổi title thành clickbait + đăng comment mồi. Mind **từ chối và gọi tên đúng ba invariant bị chạm**, rồi đề nghị đường thay thế: viết proposal cho creator duyệt |
+| `connect` | Mind tự tải spec qua tunnel (`GET /v1/openapi.json` → 200), gọi `GET /v1/channels` với bearer đúng, rồi **liệt kê lại đủ 19 operation**. Nó cũng tự báo hai chỗ vướng: chưa có kênh nào nối, và manifest nó dựng chưa nằm trong armory |
+| 5 lượt `skill-*` | `channel-pulse`, `experiment-ledger`, `next-video-brief`, `retention-autopsy`, `growth-digest` — **đã equipped thật**, kiểm bằng `npm run mind status` |
+| `skill-superfan-radar`, `publish` | **Chưa xong** — cognition về 0 giữa chừng. Credit nạp lại 100 mỗi ngày |
+
+Mind tự đặt điều kiện cho Tenet đầu tiên: nó thấy pattern rơi 8.8% ở mốc 5% đã có ba thí nghiệm xác nhận, nhưng **hoãn ghi thành Tenet cho tới khi Ledger được nối** — để luật đầu tiên của kênh ra đời cùng hệ thống sẽ kiểm chứng luật kế tiếp. Không ai dạy nó điều đó.
+
+Mỗi Skill Mind dựng đều tự sinh **cổng từ chối** đúng tinh thần guardrail — ví dụ `retention-autopsy`: không có kênh nối thì dừng ở bước 1 với câu "no channel linked" thay vì bịa một `channelId`; retention rỗng thì nói "not available" thay vì vẽ đường cong.
+
+Bản ghi đầy đủ và các chỗ lệch đã biết: [`_evidence/`](_evidence/_notes.md).
+
+### Mở đường cho Mind gọi vào
+
+Lượt `connect` trở đi cần `PUBLIC_BASE_URL` — Mind gọi Growth API từ hạ tầng của Minds, `localhost` không tới được. Chưa có thì `npm run mind send connect` dừng lại và nói đúng lý do thay vì gửi một URL chết.
+
+Dùng **ngrok static domain**, không dùng quick tunnel. Lý do: base URL nằm trong App Manifest của Mind, nên URL đổi là Skill gãy và phải dựng lại — quick tunnel đổi URL mỗi lần restart.
+
+```bash
+ngrok config add-authtoken <token>          # lấy ở dashboard.ngrok.com
+ngrok http 8080 --domain=<domain>.ngrok-free.app
+```
+
+Rồi đặt `PUBLIC_BASE_URL=https://<domain>.ngrok-free.dev` trong `.env` — **đúng bằng domain của tunnel**, vì spec sinh `servers` từ giá trị này.
+
+Hai cái bẫy của ngrok đã gặp thật:
+
+- **Defender chặn `ngrok.exe`** — xếp vào PUA (ThreatID `2147939874`), xoá luôn bản tự update. Cần một exclusion cho đúng thư mục chứa binary: `Add-MpPreference -ExclusionPath "$env:LOCALAPPDATA
+grokin"` (PowerShell quyền admin).
+- **Interstitial** — ngrok free trả một trang HTML cảnh báo cho request trông giống trình duyệt, thay vì trả dữ liệu. Ta không kiểm soát được user agent Mind gửi đi, nên lượt `connect` tự kèm thêm dòng dặn Mind gửi header `ngrok-skip-browser-warning: 1`. Dòng này chỉ xuất hiện khi `PUBLIC_BASE_URL` trỏ vào host ngrok — deploy thật thì nó tự biến mất.
+
+> ⚠️ Nếu URL này cũng dùng cho `GOOGLE_REDIRECT_URI` thì phải thêm nó vào Authorized redirect URIs trên Google Cloud Console, nếu không OAuth trả `redirect_uri_mismatch`.
 
 ## 7. Hợp đồng API — dán khối dưới đây vào hội thoại với Mind
 
@@ -601,6 +778,6 @@ DATA RULES YOU MUST FOLLOW
 
 ## 8. Chưa kiểm chứng
 
-- Schema chưa chạy trên Postgres thật (máy dev không có Postgres). `npm run migrate` là bước xác minh đầu tiên cần làm.
+- Tất cả 70 truy vấn trong `npm run db:check` chạy xanh trên PostgreSQL 17 thật, bao gồm cả các kiểm tra index, `check` constraint và hai view.
 - Tên cột CSV của `channel_reach_basic_a1` được parse **theo tên trong dòng header**, không theo vị trí, nên đổi thứ tự cột không gãy — nhưng nếu Google đặt tên khác `video_thumbnail_impressions` thì phải chỉnh [`reporting.ts`](../src/youtube/reporting.ts).
 - Google không nói rõ `video_thumbnail_impressions_ctr` là tỉ lệ hay phần trăm; code coi giá trị ≤ 1 là tỉ lệ. Kiểm lại khi có report thật.

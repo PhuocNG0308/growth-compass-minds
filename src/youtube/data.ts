@@ -140,3 +140,20 @@ export async function comments(
     };
   });
 }
+
+/** The only write this service performs, and only ever from a creator's click. */
+export async function replyToComment(
+  accessToken: string,
+  parentId: string,
+  text: string,
+): Promise<{ ytCommentId: string }> {
+  const res = await fetch(`${BASE}/comments?part=snippet`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ snippet: { parentId, textOriginal: text } }),
+  });
+
+  if (!res.ok) throw new Error(`reply ${res.status}: ${await res.text()}`);
+  const created = (await res.json()) as { id: string };
+  return { ytCommentId: created.id };
+}

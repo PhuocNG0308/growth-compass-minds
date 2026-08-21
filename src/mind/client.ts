@@ -8,7 +8,7 @@ type Client = ReturnType<typeof createMindsClient>;
 let session: Promise<{ client: Client; mindId: string }> | null = null;
 const conversations = new Map<string, Promise<void>>();
 
-function connect() {
+export function mindSession() {
   session ??= (async () => {
     // passing the key explicitly: the library reads process.env when its module loads,
     // which happens before env.ts gets a chance to read .env
@@ -22,7 +22,7 @@ function connect() {
 }
 
 export async function conversation(alias: string): Promise<{ client: Client; alias: string }> {
-  const { client, mindId } = await connect();
+  const { client, mindId } = await mindSession();
   let ready = conversations.get(alias);
   if (!ready) {
     ready = client.ensureConversation(alias, mindId).then(() => undefined);

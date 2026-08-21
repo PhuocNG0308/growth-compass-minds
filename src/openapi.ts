@@ -30,7 +30,6 @@ export const openapi = {
       '  on the channel. Propose changes with POST /v1/proposals; the creator decides.',
     ].join('\n'),
   },
-  servers: [{ url: '/', description: 'Growth API' }],
   security: [{ bearer: [] }],
   components: {
     securitySchemes: { bearer: { type: 'http', scheme: 'bearer' } },
@@ -198,7 +197,10 @@ export const openapi = {
         summary: 'Propose a change for the creator to approve',
         description:
           'The only way to act on the channel. The creator approves or dismisses it in the app; ' +
-          'you never execute it yourself.',
+          'you never execute it yourself. With kind="experiment" you must send `experiment`: ' +
+          'each concept carries its own numeric prediction, and approving one opens that ' +
+          'experiment with that number on the record and schedules its checkpoints. This is ' +
+          'how you commit to a number before anything is published.',
         requestBody: {
           required: true,
           content: {
@@ -214,6 +216,37 @@ export const openapi = {
                   detail: { type: 'string', description: 'The exact copy or change you propose' },
                   rationale: { type: 'string', description: 'Why, grounded in this channel evidence' },
                   options: { type: 'array', items: { type: 'string' }, maxItems: 5 },
+                  experiment: {
+                    type: 'object',
+                    description: 'Required when kind="experiment". Ignored otherwise.',
+                    required: ['lever', 'concepts'],
+                    properties: {
+                      lever: { type: 'string', description: 'What is being varied: title, thumbnail, hook, format, cadence' },
+                      ytVideoId: {
+                        type: 'string',
+                        nullable: true,
+                        description: 'Attach a published video to start the checkpoint clock; omit for a concept not yet filmed',
+                      },
+                      concepts: {
+                        type: 'array',
+                        minItems: 1,
+                        maxItems: 5,
+                        items: {
+                          type: 'object',
+                          required: ['label', 'hypothesis', 'prediction'],
+                          properties: {
+                            label: { type: 'string', maxLength: 140, description: 'What the creator picks between' },
+                            hypothesis: { type: 'string', description: 'The claim this concept tests' },
+                            prediction: {
+                              type: 'object',
+                              additionalProperties: { type: 'number' },
+                              description: 'At least one number, e.g. {"ctrPct": 6.2, "avgViewPct": 44}. A concept with no number is rejected.',
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
                 },
               },
             },

@@ -1,6 +1,8 @@
 import { sql } from './client.ts';
+import { DEMO_YT_CHANNEL_ID } from '../demo.ts';
 import type {
   Channel,
+  ExperimentPayload,
   Checkpoint,
   CheckpointKind,
   Experiment,
@@ -43,6 +45,15 @@ export async function setReportingJob(channelId: string, jobId: string): Promise
 
 export async function setReachSyncedThrough(channelId: string, date: string): Promise<void> {
   await sql`update channels set reach_synced_through = ${date} where id = ${channelId}`;
+}
+
+/** Whether the last attempt reached YouTube, so nothing downstream passes stale for fresh. */
+export async function recordSync(channelId: string, error: string | null): Promise<void> {
+  await sql`
+    update channels
+    set last_sync_error = ${error},
+        last_sync_at = case when ${error}::text is null then now() else last_sync_at end
+    where id = ${channelId}`;
 }
 
 export async function upsertVideos(
@@ -102,10 +113,28 @@ export async function snapshotHistory(videoId: string, limit = 20): Promise<Snap
     order by captured_at desc limit ${limit}`;
 }
 
+/**
+ * The view curve for many videos in one round trip. Fetching this per card would be thirty
+ * queries to draw thirty sparklines.
+ */
+export async function viewTrajectories(videoIds: string[]): Promise<Map<string, number[]>> {
+  if (videoIds.length === 0) return new Map();
+  const rows = await sql<Array<{ videoId: string; views: number | null }>>`
+    select video_id, views from snapshots
+    where video_id = any(${videoIds}::uuid[]) and views is not null
+    order by video_id, age_hours`;
+
+  const byVideo = new Map<string, number[]>();
+  for (const row of rows) {
+    byVideo.set(row.videoId, [...(byVideo.get(row.videoId) ?? []), row.views!]);
+  }
+  return byVideo;
+}
+
 export async function upsertRetention(videoId: string, points: RetentionPoint[]): Promise<void> {
   await sql`
     insert into retention_curves (video_id, points) values (${videoId}, ${sql.json(points)})
-    on conflict (video_id, captured_at) do update set points = excluded.points`;
+    on conflict (video_id, captured_on) do update set points = excluded.points`;
 }
 
 export async function latestRetention(videoId: string): Promise<RetentionPoint[] | null> {
@@ -175,8 +204,13 @@ export type DueCheckpoint = Checkpoint & { experiment: Experiment; channelId: st
 export async function dueCheckpoints(now = new Date()): Promise<DueCheckpoint[]> {
   return sql<DueCheckpoint[]>`
     select c.*, e.channel_id, to_jsonb(e.*) as experiment
-    from checkpoints c join experiments e on e.id = c.experiment_id
+    from checkpoints c
+      join experiments e on e.id = c.experiment_id
+      join channels ch on ch.id = e.channel_id
     where c.fired_at is null and c.due_at <= ${now} and e.status <> 'abandoned'
+      -- the sample channel holds no Google credentials, so driving it would hit Google with
+      -- a fake token and, worse, teach the Mind about a channel that does not exist
+      and ch.yt_channel_id <> ${DEMO_YT_CHANNEL_ID}
     order by c.due_at`;
 }
 
@@ -251,22 +285,61 @@ export async function upsertComments(
   }>,
 ): Promise<void> {
   if (items.length === 0) return;
+
+  // Postgres refuses to touch the same row twice in one statement, so both sets have to be
+  // unique before they reach the multi-row upsert.
+  const people = new Map<string, { displayName: string; firstSeen: Date; lastSeen: Date }>();
+  for (const item of items) {
+    const seen = people.get(item.ytAuthorId);
+    people.set(item.ytAuthorId, {
+      displayName: item.displayName,
+      firstSeen: seen && seen.firstSeen < item.publishedAt ? seen.firstSeen : item.publishedAt,
+      lastSeen: seen && seen.lastSeen > item.publishedAt ? seen.lastSeen : item.publishedAt,
+    });
+  }
+
+  const fresh = new Map(items.map((item) => [item.ytCommentId, item]));
+
   await sql.begin(async (tx) => {
-    for (const item of items) {
-      const [viewer] = await tx<Array<{ id: string }>>`
-        insert into viewers (channel_id, yt_author_id, display_name, comment_count, last_seen_at)
-        values (${channelId}, ${item.ytAuthorId}, ${item.displayName}, 1, ${item.publishedAt})
-        on conflict (channel_id, yt_author_id) do update
-          set comment_count = viewers.comment_count + 1,
-              display_name = excluded.display_name,
-              last_seen_at = greatest(viewers.last_seen_at, excluded.last_seen_at)
-        returning id`;
-      await tx`
-        insert into comments (video_id, viewer_id, yt_comment_id, text, like_count, published_at)
-        values (${item.videoId}, ${viewer!.id}, ${item.ytCommentId}, ${item.text},
-                ${item.likeCount}, ${item.publishedAt})
-        on conflict (yt_comment_id) do nothing`;
-    }
+    const viewers = await tx<Array<{ id: string; ytAuthorId: string }>>`
+      insert into viewers ${tx(
+        [...people].map(([ytAuthorId, person]) => ({
+          channelId,
+          ytAuthorId,
+          displayName: person.displayName,
+          commentCount: 0,
+          firstSeenAt: person.firstSeen,
+          lastSeenAt: person.lastSeen,
+        })),
+      )}
+      on conflict (channel_id, yt_author_id) do update
+        set display_name = excluded.display_name,
+            first_seen_at = least(viewers.first_seen_at, excluded.first_seen_at),
+            last_seen_at = greatest(viewers.last_seen_at, excluded.last_seen_at)
+      returning id, yt_author_id`;
+
+    const viewerIds = new Map(viewers.map((row) => [row.ytAuthorId, row.id]));
+
+    // every sync re-fetches the same comments, so the counter may only move for rows that
+    // were genuinely new — otherwise a newcomer inflates into a superfan
+    await tx`
+      with added as (
+        insert into comments ${tx(
+          [...fresh.values()].map((item) => ({
+            videoId: item.videoId,
+            viewerId: viewerIds.get(item.ytAuthorId)!,
+            ytCommentId: item.ytCommentId,
+            text: item.text,
+            likeCount: item.likeCount,
+            publishedAt: item.publishedAt,
+          })),
+        )}
+        on conflict (yt_comment_id) do nothing
+        returning viewer_id
+      ),
+      tally as (select viewer_id, count(*) as added from added group by viewer_id)
+      update viewers set comment_count = viewers.comment_count + tally.added
+      from tally where viewers.id = tally.viewer_id`;
   });
 }
 
@@ -309,12 +382,48 @@ export type Superfan = {
   tenureDays: number;
 };
 
-export async function superfans(channelId: string, limit = 20): Promise<Superfan[]> {
+export type SegmentThresholds = {
+  superfanComments: number;
+  potentialComments: number;
+  superfanTenureDays: number;
+};
+
+/**
+ * The same ladder `segmentOf` walks, expressed in SQL so a channel with 90k commenters can
+ * be counted and paged without loading every viewer into memory. Thresholds are passed in
+ * rather than repeated here, so the definition still lives in one place.
+ */
+const segmentCase = (t: SegmentThresholds) => sql`
+  case
+    when comment_count >= ${t.superfanComments}
+      and first_seen_at <= now() - make_interval(days => ${t.superfanTenureDays}) then 'superfan'
+    when comment_count >= ${t.potentialComments} then 'potential'
+    else 'newcomer'
+  end`;
+
+export async function segmentCounts(
+  channelId: string,
+  thresholds: SegmentThresholds,
+): Promise<Record<string, number>> {
+  const rows = await sql<Array<{ segment: string; total: number }>>`
+    select ${segmentCase(thresholds)} as segment, count(*)::int as total
+    from viewers where channel_id = ${channelId}
+    group by 1`;
+  return Object.fromEntries(rows.map((row) => [row.segment, row.total]));
+}
+
+export async function viewersBySegment(
+  channelId: string,
+  thresholds: SegmentThresholds,
+  segment: string | null,
+  limit = 40,
+): Promise<Superfan[]> {
   return sql<Superfan[]>`
     select yt_author_id, display_name, comment_count, first_seen_at, last_seen_at,
            extract(day from last_seen_at - first_seen_at)::int as tenure_days
     from viewers
-    where channel_id = ${channelId} and comment_count > 1
+    where channel_id = ${channelId}
+      and ${segment ? sql`${segmentCase(thresholds)} = ${segment}` : sql`true`}
     order by comment_count desc, tenure_days desc
     limit ${limit}`;
 }
@@ -332,6 +441,90 @@ export type Activity = {
   videoTitle: string | null;
   ytVideoId: string | null;
 };
+
+export type TimelineEvent = {
+  at: Date;
+  kind: string;
+  automated: boolean;
+  refId: string;
+  title: string;
+  detail: Record<string, Json>;
+};
+
+export async function timeline(
+  channelId: string,
+  opts: { limit?: number; before?: Date; automatedOnly?: boolean } = {},
+): Promise<TimelineEvent[]> {
+  return sql<TimelineEvent[]>`
+    select at, kind, automated, ref_id, title, detail from growth_timeline
+    where channel_id = ${channelId}
+      ${opts.before ? sql`and at < ${opts.before}` : sql``}
+      ${opts.automatedOnly ? sql`and automated` : sql``}
+    order by at desc
+    limit ${Math.min(Math.max(opts.limit ?? 60, 1), 200)}`;
+}
+
+export type ScoredExperiment = {
+  id: string;
+  lever: string;
+  hypothesis: string;
+  verdict: string | null;
+  closedAt: Date;
+  predictedCtr: number | null;
+  actualCtr: number | null;
+  ctrDelta: number | null;
+};
+
+export async function experimentScores(channelId: string): Promise<ScoredExperiment[]> {
+  return sql<ScoredExperiment[]>`
+    select id, lever, hypothesis, verdict, closed_at, predicted_ctr, actual_ctr, ctr_delta
+    from experiment_scores
+    where channel_id = ${channelId} and closed_at is not null and ctr_delta is not null
+    order by closed_at`;
+}
+
+export type Accuracy = {
+  graded: number;
+  meanAbsCtrError: number | null;
+  meanAbsAvpError: number | null;
+  recentAbsCtrError: number | null;
+  earlierAbsCtrError: number | null;
+};
+
+/**
+ * Recent versus earlier is the only number that answers "is it getting better at my
+ * channel?", which is the whole claim. Split at the halfway point of what has been graded.
+ */
+export async function accuracy(channelId: string): Promise<Accuracy> {
+  const [row] = await sql<Accuracy[]>`
+    with graded as (
+      select abs(ctr_delta) as ctr_error, abs(avp_delta) as avp_error,
+             row_number() over (order by closed_at desc) as recency,
+             count(*) over () as total
+      from experiment_scores
+      where channel_id = ${channelId} and actual_ctr is not null and closed_at is not null
+    )
+    select count(*)::int as graded,
+           avg(ctr_error) as mean_abs_ctr_error,
+           avg(avp_error) as mean_abs_avp_error,
+           avg(ctr_error) filter (where recency <= total / 2.0) as recent_abs_ctr_error,
+           avg(ctr_error) filter (where recency > total / 2.0) as earlier_abs_ctr_error
+    from graded`;
+  return row!;
+}
+
+export async function memoryTotals(
+  channelId: string,
+): Promise<{ sessions: number; automated: number; tenets: number }> {
+  const [row] = await sql<Array<{ sessions: number; automated: number; tenets: number }>>`
+    select
+      (select count(*)::int from chat_threads where channel_id = ${channelId}) as sessions,
+      (select count(*)::int from growth_timeline
+        where channel_id = ${channelId} and automated) as automated,
+      (select count(*)::int from learnings
+        where channel_id = ${channelId} and promoted_to_tenet_at is not null) as tenets`;
+  return row!;
+}
 
 export async function recentActivity(channelId: string, limit = 25): Promise<Activity[]> {
   return sql<Activity[]>`
@@ -395,11 +588,13 @@ export async function createProposal(input: {
   detail: string;
   rationale: string;
   options: string[];
+  payload?: ExperimentPayload | null;
 }): Promise<Proposal> {
   const [row] = await sql<Proposal[]>`
-    insert into proposals (channel_id, video_id, kind, summary, detail, rationale, options)
+    insert into proposals (channel_id, video_id, kind, summary, detail, rationale, options, payload)
     values (${input.channelId}, ${input.videoId}, ${input.kind}, ${input.summary},
-            ${input.detail}, ${input.rationale}, ${sql.json(input.options)})
+            ${input.detail}, ${input.rationale}, ${sql.json(input.options)},
+            ${input.payload ? sql.json(input.payload) : null})
     returning *`;
   return row!;
 }
@@ -431,6 +626,8 @@ export async function decideProposal(
 export type PostComment = {
   ytCommentId: string;
   ytAuthorId: string;
+  repliedAt: Date | null;
+  replyText: string | null;
   text: string;
   likeCount: number;
   publishedAt: Date;
@@ -443,6 +640,7 @@ export type PostComment = {
 export async function commentsForVideo(videoId: string, limit = 200): Promise<PostComment[]> {
   return sql<PostComment[]>`
     select c.yt_comment_id, c.text, c.like_count, c.published_at, c.triage,
+           c.replied_at, c.reply_text,
            w.yt_author_id, w.display_name, w.comment_count as viewer_comment_count,
            w.first_seen_at as viewer_first_seen_at
     from comments c join viewers w on w.id = c.viewer_id
@@ -534,4 +732,47 @@ export async function segmentCensus(channelId: string): Promise<
     select display_name, comment_count, first_seen_at, yt_author_id
     from viewers where channel_id = ${channelId}
     order by comment_count desc limit 200`;
+}
+
+export type ReplyTarget = PostComment & { videoTitle: string; ytVideoId: string; thumbnailUrl: string | null };
+
+/**
+ * The reply queue, ranked the way a creator would triage it: the people who keep coming
+ * back first, then the ones the audience upvoted, then everything else by recency.
+ */
+export async function replyQueue(channelId: string, limit = 40): Promise<ReplyTarget[]> {
+  return sql<ReplyTarget[]>`
+    select c.yt_comment_id, c.text, c.like_count, c.published_at, c.triage,
+           c.replied_at, c.reply_text,
+           w.yt_author_id, w.display_name, w.comment_count as viewer_comment_count,
+           w.first_seen_at as viewer_first_seen_at,
+           v.title as video_title, v.yt_video_id, v.thumbnail_url
+    from comments c
+      join viewers w on w.id = c.viewer_id
+      join videos v on v.id = c.video_id
+    where v.channel_id = ${channelId} and c.replied_at is null
+    order by w.comment_count desc, c.like_count desc, c.published_at desc
+    limit ${limit}`;
+}
+
+export async function markReplied(
+  ytCommentId: string,
+  text: string,
+  replyYtId: string | null,
+): Promise<void> {
+  await sql`
+    update comments
+    set replied_at = now(), reply_text = ${text}, reply_yt_id = ${replyYtId}
+    where yt_comment_id = ${ytCommentId}`;
+}
+
+export async function commentOwner(
+  channelId: string,
+  ytCommentId: string,
+): Promise<{ displayName: string; text: string; videoTitle: string } | undefined> {
+  const [row] = await sql<Array<{ displayName: string; text: string; videoTitle: string }>>`
+    select w.display_name, c.text, v.title as video_title
+    from comments c join viewers w on w.id = c.viewer_id join videos v on v.id = c.video_id
+    where c.yt_comment_id = ${ytCommentId} and v.channel_id = ${channelId}`;
+  return row;
 }

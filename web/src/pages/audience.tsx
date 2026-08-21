@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Chips, Empty, List, Loading, SectionTitle } from '@/components/shell';
+import { Chips, Empty, Failed, List, Loading, SectionTitle } from '@/components/shell';
 import { SegmentBadge } from '@/pages/feed';
+import { ReplyQueue } from '@/components/reply-queue';
 import { api } from '@/lib/api';
 import { useFormat } from '@/lib/format';
 import { useI18n } from '@/lib/i18n';
@@ -21,42 +22,45 @@ const TIER_AVATAR: Record<Segment, string> = {
 };
 
 export function Audience() {
-  const { t, plural } = useI18n();
+  const { t } = useI18n();
   const f = useFormat();
   const [tier, setTier] = useState<Tier>('all');
-  const { data, loading, error } = useAsync(() => api.audience(), []);
+  const [round, setRound] = useState(0);
+  const [limit, setLimit] = useState(40);
+  const { data, loading, error } = useAsync(
+    () => api.audience(tier === 'all' ? null : tier, limit),
+    [tier, limit, round],
+  );
 
-  if (loading) return <Loading />;
-  if (error || !data) return <Empty>{t('state.error')}</Empty>;
+  if (loading) return <Loading rows={3} />;
+  if (error || !data) return <Failed onRetry={() => setRound((n) => n + 1)} />;
 
-  const people = new Map<string, Segment>();
-  for (const fan of data.superfans) people.set(fan.ytAuthorId, fan.segment);
-  for (const comment of data.queue) people.set(comment.ytAuthorId, comment.segment);
+  const counts = data.segmentCounts;
+  const total = TIERS.reduce((sum, key) => sum + (counts[key] ?? 0), 0);
 
-  const fans = data.superfans.filter((fan) => tier === 'all' || fan.segment === tier);
-  const queue = data.queue.filter((comment) => tier === 'all' || comment.segment === tier);
-
-  const counts = new Map<Segment, number>();
-  for (const segment of people.values()) counts.set(segment, (counts.get(segment) ?? 0) + 1);
+  const shownTotal = tier === 'all' ? total : (counts[tier] ?? 0);
 
   const options = [
-    { key: 'all', label: t('filter.all'), count: people.size },
-    ...TIERS.filter((key) => counts.has(key)).map((key) => ({
-      key,
-      label: t(`filter.${key}`),
-      count: counts.get(key)!,
-    })),
+    { key: 'all', label: t('filter.all'), count: total },
+    ...TIERS.map((key) => ({ key, label: t(`filter.${key}`), count: counts[key] ?? 0 })),
   ];
 
   return (
     <>
-      <Chips options={options} value={tier} onChange={(key) => setTier(key as Tier)} />
+      <Chips
+        options={options}
+        value={tier}
+        onChange={(key) => {
+          setTier(key as Tier);
+          setLimit(40);
+        }}
+      />
       <p className="text-muted-foreground mb-6 text-sm">{t(`tier.hint.${tier}`)}</p>
 
       <SectionTitle>{t('section.fans')}</SectionTitle>
-      {fans.length ? (
+      {data.superfans.length ? (
         <List>
-          {fans.map((fan) => (
+          {data.superfans.map((fan) => (
             <a
               key={fan.ytAuthorId}
               href={`#/viewer/${encodeURIComponent(fan.ytAuthorId)}`}
@@ -86,37 +90,20 @@ export function Audience() {
         <Empty>{t(tier === 'all' ? 'empty.fans' : 'empty.tierFans')}</Empty>
       )}
 
-      <SectionTitle>{t('section.queue')}</SectionTitle>
-      {queue.length ? (
-        <List>
-          {queue.map((comment) => (
-            <a
-              key={comment.ytCommentId}
-              href={`#/viewer/${encodeURIComponent(comment.ytAuthorId)}`}
-              className={cn(focusRing, 'hover:bg-accent flex gap-4 p-4')}
-            >
-              <span className={cn(AVATAR, TIER_AVATAR[comment.segment])}>
-                {comment.displayName.trim().charAt(0).toUpperCase()}
-              </span>
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="truncate font-semibold">{comment.displayName}</span>
-                  <SegmentBadge segment={comment.segment} />
-                  <span className="text-muted-foreground text-xs">
-                    {plural('fan.comments', comment.viewerCommentCount)}
-                  </span>
-                </div>
-                <p className="mt-1 max-w-[68ch] text-[15px] leading-relaxed">{comment.text}</p>
-                <div className="text-muted-foreground mt-2 text-xs">
-                  {t('fan.on', { title: comment.videoTitle })} · {f.shortDate(comment.publishedAt)}
-                </div>
-              </div>
-            </a>
-          ))}
-        </List>
-      ) : (
-        <Empty>{t(tier === 'all' ? 'empty.queue' : 'empty.tierQueue')}</Empty>
+      {shownTotal > data.superfans.length && (
+        <button
+          onClick={() => setLimit((n) => n + 40)}
+          className={cn(
+            focusRing,
+            'text-muted-foreground hover:text-foreground w-full rounded-md py-4 text-sm font-medium',
+          )}
+        >
+          {t('queue.more', { n: String(shownTotal - data.superfans.length) })}
+        </button>
       )}
+
+      <SectionTitle>{t('section.queue')}</SectionTitle>
+      <ReplyQueue segment={tier === 'all' ? null : tier} />
     </>
   );
 }

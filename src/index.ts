@@ -1,7 +1,8 @@
 import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
-import { env, unsetEnv } from './env.ts';
+import { sql } from './db/client.ts';
+import { demoEnabled, env, googleConfigured, unsetEnv } from './env.ts';
 import { appRoutes } from './routes/app.ts';
 import { authRoutes } from './routes/auth.ts';
 import { mindRoutes } from './routes/mind.ts';
@@ -13,9 +14,16 @@ import { reachableAt } from './net.ts';
 const app = new Hono();
 
 app.get('/health', (c) => c.json({ ok: true, mindEnabled }));
-app.get('/api/mode', (c) => c.json({ preview: false }));
-// public so it can be pasted into the Minds chat without juggling the bearer token
-app.get('/v1/openapi.json', (c) => c.json(openapi));
+app.get('/api/mode', (c) => c.json({ demo: demoEnabled, googleConfigured, liveMind: mindEnabled }));
+// public so it can be pasted into the Minds chat without juggling the bearer token.
+// The Mind builds its tool schema from `servers`, so the URL has to be absolute and has
+// to be the one it can actually reach — a tunnel host, not localhost.
+app.get('/v1/openapi.json', (c) =>
+  c.json({
+    ...openapi,
+    servers: [{ url: env.PUBLIC_BASE_URL ?? new URL(c.req.url).origin, description: 'Growth API' }],
+  }),
+);
 app.route('/auth', authRoutes);
 app.route('/api', appRoutes);
 app.route('/v1', mindRoutes);
@@ -39,6 +47,6 @@ const server = serve({ fetch: app.fetch, port: env.PORT, hostname: '0.0.0.0' }, 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
     stopRunner();
-    server.close(() => process.exit(0));
+    server.close(() => void sql.end({ timeout: 5 }).then(() => process.exit(0)));
   });
 }

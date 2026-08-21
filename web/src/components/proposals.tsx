@@ -4,10 +4,12 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Thumb } from '@/components/thumb';
+import { useToast } from '@/components/toast';
 import { api } from '@/lib/api';
 import { useFormat } from '@/lib/format';
 import { useI18n } from '@/lib/i18n';
-import type { Proposal } from '@/lib/types';
+import { cn, focusRing } from '@/lib/utils';
+import type { Concept, Proposal } from '@/lib/types';
 
 export function ProposalList({ proposals, onDecided }: { proposals: Proposal[]; onDecided: () => void }) {
   return (
@@ -22,17 +24,33 @@ export function ProposalList({ proposals, onDecided }: { proposals: Proposal[]; 
 function ProposalRow({ proposal, onDecided }: { proposal: Proposal; onDecided: () => void }) {
   const { t } = useI18n();
   const f = useFormat();
+  const notify = useToast();
   const [busy, setBusy] = useState(false);
-  const [choice, setChoice] = useState<string | null>(proposal.options[0] ?? null);
+  const concepts = proposal.payload?.concepts ?? [];
+  // a radio group with nothing selected looks broken, and the server would silently fall
+  // back to the first concept anyway — so say which one that is
+  const [choice, setChoice] = useState<string | null>(
+    concepts[0]?.label ?? proposal.options[0] ?? null,
+  );
 
   async function decide(status: 'approved' | 'dismissed') {
     setBusy(true);
     try {
-      await api.decide(proposal.id, status, choice ?? undefined);
+      const result = await api.decide(proposal.id, status, choice ?? undefined);
+      if (result.opened) {
+        notify(
+          result.opened.checkpoints > 0
+            ? t('proposal.opened', { n: String(result.opened.checkpoints) })
+            : t('proposal.openedUnattached'),
+        );
+      }
       onDecided();
-    } finally {
+    } catch {
+      notify(t('proposal.failed'), 'error');
       setBusy(false);
+      return;
     }
+    setBusy(false);
   }
 
   return (
@@ -53,28 +71,50 @@ function ProposalRow({ proposal, onDecided }: { proposal: Proposal; onDecided: (
         <p className="bg-muted mt-3 rounded-lg px-4 py-3 text-[15px] leading-relaxed">{proposal.detail}</p>
         <p className="mt-3 text-sm text-muted-foreground">{proposal.rationale}</p>
 
-        {proposal.options.length > 0 && (
-          <div className="mt-3 flex flex-wrap gap-2">
-            {proposal.options.map((option) => (
-              <button
-                key={option}
-                onClick={() => setChoice(option)}
-                className={
-                  option === choice
-                    ? 'border-primary bg-primary/12 text-primary rounded-lg border px-3 py-2 text-sm'
-                    : 'text-muted-foreground hover:text-foreground rounded-lg border px-3 py-2 text-sm'
-                }
-              >
-                {option}
-              </button>
-            ))}
-          </div>
+        {concepts.length > 0 ? (
+          <fieldset className="mt-4">
+            <legend className="text-muted-foreground mb-2 text-xs font-semibold tracking-wide uppercase">
+              {t('proposal.pick')}
+            </legend>
+            <div className="divide-y border-y">
+              {concepts.map((concept) => (
+                <ConceptRow
+                  key={concept.label}
+                  concept={concept}
+                  name={proposal.id}
+                  selected={concept.label === choice}
+                  onSelect={() => setChoice(concept.label)}
+                />
+              ))}
+            </div>
+          </fieldset>
+        ) : (
+          proposal.options.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {proposal.options.map((option) => (
+                <button
+                  key={option}
+                  onClick={() => setChoice(option)}
+                  aria-pressed={option === choice}
+                  className={cn(
+                    focusRing,
+                    'rounded-lg border px-3 py-2 text-sm',
+                    option === choice
+                      ? 'border-primary bg-primary/12 text-primary'
+                      : 'text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
+          )
         )}
 
         <div className="mt-4 flex gap-2">
           <Button size="sm" disabled={busy} onClick={() => decide('approved')}>
             <Check />
-            {t('proposal.approve')}
+            {t(concepts.length > 0 ? 'proposal.commit' : 'proposal.approve')}
           </Button>
           <Button size="sm" variant="ghost" disabled={busy} onClick={() => decide('dismissed')}>
             <X />
@@ -83,5 +123,60 @@ function ProposalRow({ proposal, onDecided }: { proposal: Proposal; onDecided: (
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * The number is the point. A concept the Mind will not put a figure against is a suggestion,
+ * and the ledger has no use for suggestions — so the prediction is set beside the label, not
+ * hidden behind a disclosure.
+ */
+function ConceptRow({
+  concept,
+  name,
+  selected,
+  onSelect,
+}: {
+  concept: Concept;
+  name: string;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const { t } = useI18n();
+  const f = useFormat();
+  const entries = Object.entries(concept.prediction);
+
+  return (
+    <label
+      className={cn(
+        'flex cursor-pointer gap-3 p-4 transition-colors',
+        selected ? 'bg-primary/8' : 'hover:bg-accent',
+      )}
+    >
+      <input
+        type="radio"
+        name={name}
+        checked={selected}
+        onChange={onSelect}
+        className={cn(focusRing, 'accent-primary mt-1 size-4 shrink-0')}
+      />
+      <div className="min-w-0 flex-1">
+        <div className="font-medium">{concept.label}</div>
+        <p className="text-muted-foreground mt-1 text-sm text-pretty">{concept.hypothesis}</p>
+
+        <div className="mt-3 flex flex-wrap gap-6">
+          {entries.map(([metric, value]) => (
+            <div key={metric}>
+              <div className="text-muted-foreground text-xs">
+                {t('proposal.commits')} {f.metric(metric)}
+              </div>
+              <div className="tabular text-primary text-lg font-semibold">
+                {f.metricValue(metric, value)}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </label>
   );
 }

@@ -1,21 +1,25 @@
+import { useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { RunningExperiment, SettledExperimentCard } from '@/components/experiment';
-import { Empty, List, Loading, SectionTitle } from '@/components/shell';
+import { Empty, Failed, List, Loading, SectionTitle } from '@/components/shell';
+import { Trend, type TrendPoint } from '@/components/trend';
 import { StatGrid } from '@/components/stats';
 import { api } from '@/lib/api';
+import { useFormat } from '@/lib/format';
 import { useI18n } from '@/lib/i18n';
 import { useAsync } from '@/lib/use-async';
 import { cn } from '@/lib/utils';
-import type { Me, Rule } from '@/lib/types';
+import type { Me, Rule, ScoredExperiment } from '@/lib/types';
 
 const THRESHOLD = 3;
 
 export function Lab({ me }: { me: Me }) {
   const { t } = useI18n();
-  const { data, loading, error } = useAsync(() => api.ledger(), []);
+  const [round, setRound] = useState(0);
+  const { data, loading, error } = useAsync(() => api.ledger(), [round]);
   const { counts } = me;
 
-  if (error) return <Empty>{t('state.error')}</Empty>;
+  if (error) return <Failed onRetry={() => setRound((n) => n + 1)} />;
 
   return (
     <>
@@ -29,9 +33,18 @@ export function Lab({ me }: { me: Me }) {
         ]}
       />
 
+      {data && data.scores.length >= 2 && (
+        <>
+          <SectionTitle>{t('section.accuracy')}</SectionTitle>
+          <div className="border-y py-5">
+            <Accuracy scores={data.scores} />
+          </div>
+        </>
+      )}
+
       <SectionTitle>{t('section.running')}</SectionTitle>
       {loading ? (
-        <Loading />
+        <Loading rows={2} height="h-32" />
       ) : data?.openExperiments.length ? (
         <List>
           {data.openExperiments.map((experiment) => (
@@ -50,7 +63,7 @@ export function Lab({ me }: { me: Me }) {
           ))}
         </List>
       ) : (
-        !loading && <Empty>{t('empty.settled')}</Empty>
+        loading ? <Loading rows={1} height="h-24" /> : <Empty>{t('empty.settled')}</Empty>
       )}
 
       <SectionTitle>{t('section.tenets')}</SectionTitle>
@@ -62,7 +75,7 @@ export function Lab({ me }: { me: Me }) {
           ))}
         </List>
       ) : (
-        !loading && <Empty>{t('empty.tenets')}</Empty>
+        loading ? <Loading rows={1} height="h-24" /> : <Empty>{t('empty.tenets')}</Empty>
       )}
 
       <SectionTitle>{t('section.candidates')}</SectionTitle>
@@ -73,9 +86,32 @@ export function Lab({ me }: { me: Me }) {
           ))}
         </List>
       ) : (
-        !loading && <Empty>{t('empty.candidates')}</Empty>
+        loading ? <Loading rows={1} height="h-24" /> : <Empty>{t('empty.candidates')}</Empty>
       )}
     </>
+  );
+}
+
+/**
+ * Absolute error per settled test, oldest first. A downward line is the product's whole
+ * claim, and it needs one series to say it — predicted and actual as two lines would put
+ * the reader in charge of subtracting.
+ */
+function Accuracy({ scores }: { scores: ScoredExperiment[] }) {
+  const { t } = useI18n();
+  const f = useFormat();
+
+  const points: TrendPoint[] = scores.map((score) => ({
+    label: f.shortDate(score.closedAt),
+    value: Math.abs(score.ctrDelta ?? 0),
+  }));
+
+  return (
+    <Trend
+      points={points}
+      caption={t('chart.accuracy')}
+      format={(value) => (value == null ? '' : f.dec(value, 2))}
+    />
   );
 }
 

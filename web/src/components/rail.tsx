@@ -43,6 +43,13 @@ export function Rail({ me }: { me: Me }) {
         <p className="text-muted-foreground mt-3 text-xs">
           {me.reachThrough ? t('ctr.through', { date: f.longDate(me.reachThrough) }) : t('ctr.pending')}
         </p>
+        {me.syncFailing && (
+          <p className="text-destructive mt-2 text-xs">
+            {me.lastSyncAt
+              ? t('sync.stale', { when: f.since(me.lastSyncAt) })
+              : t('sync.never')}
+          </p>
+        )}
       </section>
 
       {waiting.length > 0 && (
@@ -83,7 +90,7 @@ export function Rail({ me }: { me: Me }) {
             ))}
           </div>
           <a
-            href="#/inbox"
+            href="#/chats"
             className={cn(
               focusRing,
               'text-muted-foreground hover:text-primary mt-3 inline-flex items-center gap-1 text-xs font-medium',

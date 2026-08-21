@@ -126,10 +126,14 @@ export async function searchChat(
       ${text ? sql`and to_tsvector('simple', m.body) @@ plainto_tsquery('simple', ${text})` : sql``}
       ${
         refs.length > 0
-          ? sql`and exists (
+          ? // a row-constructor IN list is not something postgres can parse from a bind
+            // parameter, so the pairs go in as two parallel arrays and get zipped back
+            sql`and exists (
               select 1 from chat_refs r
+              join unnest(${refs.map((ref) => ref.kind)}::text[], ${refs.map((ref) => ref.refId)}::text[])
+                as wanted(kind, ref_id)
+                on wanted.kind = r.kind and wanted.ref_id = r.ref_id
               where r.message_id = m.id
-                and (r.kind, r.ref_id) in ${sql(refs.map((ref) => [ref.kind, ref.refId]))}
             )`
           : sql``
       }

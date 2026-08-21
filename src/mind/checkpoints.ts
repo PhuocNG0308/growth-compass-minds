@@ -18,13 +18,22 @@ async function fire(checkpoint: repo.DueCheckpoint): Promise<void> {
 
   const experiment = checkpoint.experiment;
   const video = experiment.videoId ? await repo.getVideoById(experiment.videoId) : undefined;
-  if (video) await syncVideo(channel, video.ytVideoId).catch((err) => console.error('[sync]', err));
+
+  let staleSince: Date | null = null;
+  if (video) {
+    await syncVideo(channel, video.ytVideoId).catch((err) => {
+      console.error('[sync]', err);
+      staleSince = channel.lastSyncAt;
+    });
+  }
 
   const snapshot = video ? await repo.latestSnapshot(video.id) : undefined;
   const curve = video ? await repo.latestRetention(video.id) : null;
 
   await repo.markFired(checkpoint.id);
-  await notifyMind(buildBrief({ checkpoint, channelTitle: channel.title, video, snapshot, curve }));
+  await notifyMind(
+    buildBrief({ checkpoint, channelTitle: channel.title, video, snapshot, curve, staleSince }),
+  );
 }
 
 function buildBrief(input: {
@@ -33,8 +42,9 @@ function buildBrief(input: {
   video: Awaited<ReturnType<typeof repo.getVideoById>>;
   snapshot: Awaited<ReturnType<typeof repo.latestSnapshot>>;
   curve: Awaited<ReturnType<typeof repo.latestRetention>>;
+  staleSince: Date | null;
 }): string {
-  const { checkpoint, channelTitle, video, snapshot, curve } = input;
+  const { checkpoint, channelTitle, video, snapshot, curve, staleSince } = input;
   const observed = {
     views: snapshot?.views ?? null,
     ctrPct: snapshot?.ctr ?? null,
@@ -54,6 +64,12 @@ function buildBrief(input: {
     `predicted: ${JSON.stringify(checkpoint.experiment.prediction)}`,
     `observed: ${JSON.stringify(observed)}`,
     curve ? `steepestDropOffs: ${JSON.stringify(steepestDropOffs(curve))}` : 'retention: unavailable',
+    // saying nothing here would hand the Mind a stale reading as if it were this morning's
+    staleSince
+      ? `WARNING: YouTube could not be reached, so these numbers are unchanged since ` +
+        `${staleSince.toISOString()}. Treat them as old, say so to the creator, and do not ` +
+        `grade the prediction on them.`
+      : 'freshness: numbers were refreshed from YouTube just now.',
     '',
     'Do now:',
     `1. POST /v1/checkpoints/${checkpoint.id}/observe with your reading of predicted vs observed.`,

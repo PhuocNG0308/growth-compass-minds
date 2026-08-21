@@ -5,10 +5,18 @@ import type { Channel } from '../types.ts';
 const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 
+/**
+ * force-ssl is what makes comments.insert possible. It is a write scope, so the promise
+ * changes from "we cannot post" to "nothing posts without the creator pressing Send" —
+ * enforced in the API, which has no path that publishes on the Mind's behalf.
+ */
 const SCOPES = [
   'https://www.googleapis.com/auth/youtube.readonly',
   'https://www.googleapis.com/auth/yt-analytics.readonly',
+  ...(env.YOUTUBE_REPLIES === 'off' ? [] : ['https://www.googleapis.com/auth/youtube.force-ssl']),
 ];
+
+export const repliesEnabled = env.YOUTUBE_REPLIES !== 'off';
 
 export function consentUrl(state: string): string {
   const params = new URLSearchParams({

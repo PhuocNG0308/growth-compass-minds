@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { TriangleAlert } from 'lucide-react';
 import { Alert, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { Empty, List, Loading, SectionTitle, SubTitle } from '@/components/shell';
+import { Empty, Failed, List, Loading, SectionTitle, SubTitle } from '@/components/shell';
 import { ProposalList } from '@/components/proposals';
 import { api } from '@/lib/api';
 import { useFormat } from '@/lib/format';
@@ -16,15 +16,16 @@ export function Inbox({ me }: { me: Me }) {
   const f = useFormat();
   const [round, setRound] = useState(0);
   const proposals = useAsync(() => api.proposals(), [round]);
-  const activity = useAsync(() => api.activity(), []);
-  const chats = useAsync(() => api.chats(), []);
+  const activity = useAsync(() => api.activity(), [round]);
+  const chats = useAsync(() => api.chats(), [round]);
+  const retry = () => setRound((n) => n + 1);
 
   const waiting = proposals.data ?? [];
 
   return (
     <>
       {me.counts.overdue > 0 && (
-        <Alert className="border-warning/30 bg-warning/10 text-warning mb-5">
+        <Alert className="border-warning/30 bg-warning/10 text-warning mb-5 xl:hidden">
           <TriangleAlert />
           <AlertTitle className="text-[15px]">{plural('alert.overdue', me.counts.overdue)}</AlertTitle>
         </Alert>
@@ -42,15 +43,32 @@ export function Inbox({ me }: { me: Me }) {
         {t('section.needsYou')}
       </SectionTitle>
       {proposals.loading ? (
-        <Loading />
+        <Loading rows={2} height="h-32" />
+      ) : proposals.error ? (
+        <Failed onRetry={retry} />
       ) : waiting.length ? (
         <ProposalList proposals={waiting} onDecided={() => setRound((n) => n + 1)} />
       ) : (
         <p className="text-muted-foreground text-[15px]">{t('empty.proposals')}</p>
       )}
 
-      <SubTitle>{t('section.chats')}</SubTitle>
-      {chats.data?.length ? (
+      <SubTitle
+        action={
+          <a
+            href="#/chats"
+            className={cn(focusRing, 'text-muted-foreground hover:text-primary rounded-md text-xs font-medium')}
+          >
+            {t('rail.allChats')}
+          </a>
+        }
+      >
+        {t('section.chats')}
+      </SubTitle>
+      {chats.loading ? (
+        <Loading rows={2} height="h-20" />
+      ) : chats.error ? (
+        <Failed onRetry={retry} />
+      ) : chats.data?.length ? (
         <List>
           {chats.data.slice(0, 6).map((thread) => (
             <a
@@ -76,7 +94,9 @@ export function Inbox({ me }: { me: Me }) {
 
       <SubTitle>{t('section.activity')}</SubTitle>
       {activity.loading ? (
-        <Loading />
+        <Loading rows={2} height="h-20" />
+      ) : activity.error ? (
+        <Failed onRetry={retry} />
       ) : activity.data?.length ? (
         <List>
           {activity.data.map((item) => (
@@ -111,11 +131,10 @@ function ActivityRow({ item }: { item: Activity }) {
   );
 }
 
+/**
+ * The Mind writes `summary` when it has something to say. Anything else in the observation
+ * is our own storage shape, and dumping `ctrPct 5.81` at a creator is not a sentence.
+ */
 function summarise(observation: Record<string, unknown> | null): string {
-  if (!observation) return '';
-  if (typeof observation.summary === 'string') return observation.summary;
-  return Object.entries(observation)
-    .slice(0, 3)
-    .map(([key, value]) => `${key} ${String(value)}`)
-    .join(' · ');
+  return observation && typeof observation.summary === 'string' ? observation.summary : '';
 }

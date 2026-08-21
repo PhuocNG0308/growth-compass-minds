@@ -41,7 +41,7 @@ export function Sparkline({ points, className }: { points: number[]; className?:
     .join(' ');
 
   return (
-    <svg viewBox="0 0 100 30" preserveAspectRatio="none" className={cn('h-7 w-full', className)}>
+    <svg viewBox="0 0 100 30" preserveAspectRatio="none" className={cn('h-8 w-full', className)}>
       <path d={`${path} L100 30 L0 30 Z`} className="fill-primary opacity-15" />
       <path d={path} className="stroke-primary fill-none" strokeWidth={2} vectorEffect="non-scaling-stroke" />
     </svg>

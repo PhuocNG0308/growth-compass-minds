@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { api } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
-import { cn } from '@/lib/utils';
+import { cn, focusRing } from '@/lib/utils';
 import type { Mention, Suggestion } from '@/lib/types';
 
 const ICON: Record<string, typeof User> = {
@@ -18,10 +18,12 @@ export function AskPanel({
   subject,
   suggestions,
   title = 'ask.title',
+  autoFocus = false,
 }: {
   subject: { ask: (question: string, mentions: Mention[]) => Promise<AskResult>; chat: () => Promise<Turn[]> };
   suggestions: string[];
   title?: string;
+  autoFocus?: boolean;
 }) {
   const { t } = useI18n();
   const [question, setQuestion] = useState('');
@@ -62,8 +64,10 @@ export function AskPanel({
         {t(title)}
       </p>
 
+      {/* the answer can take a minute to land; a screen reader gets nothing from a bubble
+          quietly appearing */}
       {(turns.length > 0 || busy) && (
-        <div className="max-h-96 space-y-3 overflow-y-auto px-4 py-4">
+        <div aria-live="polite" className="max-h-96 space-y-3 overflow-y-auto px-4 py-4">
           {turns.map((turn, i) => (
             <div
               key={i}
@@ -88,7 +92,9 @@ export function AskPanel({
         </div>
       )}
 
-      {notice && <p className="text-muted-foreground px-4 pb-3 text-sm">{notice}</p>}
+      <p role="status" aria-live="polite" className="text-muted-foreground px-4 text-sm empty:hidden">
+        {notice}
+      </p>
 
       {!busy && (
         <div className="flex flex-wrap gap-2 px-4 pt-4 pb-1">
@@ -96,7 +102,10 @@ export function AskPanel({
             <button
               key={key}
               onClick={() => send(t(key))}
-              className="text-muted-foreground hover:border-primary hover:text-primary rounded-full border px-4 py-2 text-sm"
+              className={cn(
+                focusRing,
+                'text-muted-foreground hover:border-primary hover:text-primary rounded-full border px-4 py-2 text-sm',
+              )}
             >
               {t(key)}
             </button>
@@ -111,6 +120,7 @@ export function AskPanel({
         setTagged={setTagged}
         onSend={send}
         busy={busy}
+        autoFocus={autoFocus}
       />
     </Card>
   );
@@ -126,6 +136,7 @@ function Composer({
   setTagged,
   onSend,
   busy,
+  autoFocus,
 }: {
   question: string;
   setQuestion: (value: string) => void;
@@ -133,11 +144,19 @@ function Composer({
   setTagged: (value: Array<Mention & { label: string }>) => void;
   onSend: (text: string) => void;
   busy: boolean;
+  autoFocus?: boolean;
 }) {
   const { t } = useI18n();
   const [picker, setPicker] = useState<string | null>(null);
   const [options, setOptions] = useState<Suggestion[]>([]);
   const input = useRef<HTMLInputElement>(null);
+
+  // arriving from "Ask Mind" should land on the box, not near it
+  useEffect(() => {
+    if (!autoFocus) return;
+    input.current?.scrollIntoView({ block: 'center' });
+    input.current?.focus();
+  }, [autoFocus]);
 
   useEffect(() => {
     if (picker === null) return;
@@ -222,7 +241,10 @@ function Composer({
           onChange={(event) => onChange(event.target.value)}
           onKeyDown={(event) => event.key === 'Escape' && setPicker(null)}
           placeholder={t('ask.placeholder')}
-          className="focus-visible:border-primary min-w-0 flex-1 rounded-lg border px-4 py-3 text-[15px] outline-none"
+          className={cn(
+            focusRing,
+            'focus-visible:border-primary min-w-0 flex-1 rounded-lg border px-4 py-3 text-[15px] outline-none',
+          )}
         />
         <Button type="submit" size="icon" disabled={busy} aria-label={t('ask.send')}>
           <Send />

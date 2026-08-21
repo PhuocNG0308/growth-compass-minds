@@ -27,18 +27,25 @@ The integration layer between the Mind, YouTube, and the long-term memory store 
 implemented in [src/](src/), with a creator-facing frontend in [web/](web/) built on
 React, Tailwind and shadcn/ui:
 connect a channel through Google's own consent window, then read the ledger across five
-screens — overview, experiments, videos with retention curves, audience, and the rules
-the channel has taught the Mind. No CLI in the end-user path. Skills and the Telegram
+screens — feed, inbox, tests, memory, and audience: the videos with their retention curves,
+the proposals waiting on you, the ledger of predictions graded against reality, and the
+trail of everything the Mind has remembered. No CLI in the end-user path. Skills and the Telegram
 surface are next.
 
 ## Look at it
 
 ```bash
 npm install && npm --prefix web install
-npm run preview
+docker compose up -d              # PostgreSQL 17
+npm run migrate
+npm run seed:demo                 # a generated channel: 24 videos, 146 viewers, 552 comments
+DEMO_MODE=on npm run dev
 ```
 
-Opens straight into the dashboard on sample data — no database, no Google, no Mind.
+Open the app and pick **Explore with sample data**. It signs you into a generated channel
+that runs through the same code path as a real one — same queries, same screens — with
+syncing and comment replies locked. No Google account needed. If `MINDS_BUILDER_API_KEY` is
+set, asking the Mind about that sample data reaches your real Mind.
 
 ## Docs
 

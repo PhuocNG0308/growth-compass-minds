@@ -6,10 +6,12 @@
   "engines": { "node": ">=22" },
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "preview": "npm run build:web && tsx dev/preview.ts",
     "build:web": "npm --prefix web run build",
     "start": "tsx src/index.ts",
     "migrate": "tsx src/db/migrate.ts",
+    "db:check": "tsx dev/dbcheck.ts",
+    "seed:demo": "tsx dev/seed-demo.ts",
+    "mind": "tsx dev/mind.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

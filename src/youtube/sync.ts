@@ -12,6 +12,13 @@ export async function syncChannel(
   channel: Channel,
   opts: { videoLimit?: number; withComments?: boolean } = {},
 ): Promise<{ videos: number; reachThrough: string | null }> {
+  return track(channel, () => pullChannel(channel, opts));
+}
+
+async function pullChannel(
+  channel: Channel,
+  opts: { videoLimit?: number; withComments?: boolean },
+): Promise<{ videos: number; reachThrough: string | null }> {
   const token = await accessTokenFor(channel);
   const info = await channelInfo(token);
   const ids = await uploadIds(token, info.uploadsPlaylistId, opts.videoLimit ?? 25);
@@ -47,6 +54,26 @@ export async function syncChannel(
 }
 
 export async function syncVideo(channel: Channel, ytVideoId: string): Promise<Video | undefined> {
+  return track(channel, () => pullVideo(channel, ytVideoId));
+}
+
+/**
+ * A refresh token dies after seven days while the consent screen is in Testing, and the
+ * failure is silent everywhere it matters: the snapshot simply stays where it was. Recording
+ * the outcome is what lets the checkpoint brief admit the numbers are old.
+ */
+async function track<T>(channel: Channel, run: () => Promise<T>): Promise<T> {
+  try {
+    const result = await run();
+    await repo.recordSync(channel.id, null);
+    return result;
+  } catch (err) {
+    await repo.recordSync(channel.id, err instanceof Error ? err.message : String(err));
+    throw err;
+  }
+}
+
+async function pullVideo(channel: Channel, ytVideoId: string): Promise<Video | undefined> {
   const token = await accessTokenFor(channel);
   const [detail] = await videoDetails(token, [ytVideoId]);
   if (!detail) return undefined;

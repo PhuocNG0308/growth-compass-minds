@@ -2,7 +2,9 @@ import { useFormat } from '@/lib/format';
 import { useI18n } from '@/lib/i18n';
 import type { VideoDetail } from '@/lib/types';
 
-const W = 720;
+// Text inside a viewBox scales with the container. Desktop renders this at roughly 1:1, but
+// a phone card is half the width, which would halve the labels with it — so the caller that
+// has less room asks for a smaller coordinate space instead of smaller type.
 const H = 220;
 const TOP = 14;
 const BOTTOM = 30;
@@ -12,10 +14,13 @@ const PLOT = H - TOP - BOTTOM;
 export function RetentionChart({
   retention,
   durationS,
+  width = 720,
 }: {
   retention: NonNullable<VideoDetail['retention']>;
   durationS: number | null;
+  width?: number;
 }) {
+  const W = width;
   const { t } = useI18n();
   const f = useFormat();
 

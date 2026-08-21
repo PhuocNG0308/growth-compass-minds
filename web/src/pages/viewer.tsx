@@ -1,7 +1,8 @@
+import { useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { AskPanel } from '@/components/ask-panel';
-import { Empty, List, Loading, SectionTitle } from '@/components/shell';
+import { Empty, Failed, List, Loading, SectionTitle } from '@/components/shell';
 import { StatGrid } from '@/components/stats';
 import { Thumb } from '@/components/thumb';
 import { SegmentBadge } from '@/pages/feed';
@@ -16,15 +17,13 @@ const SUGGESTIONS = ['ask.viewerWho', 'ask.viewerKeep', 'ask.viewerIdea'];
 export function ViewerProfile({ ytAuthorId }: { ytAuthorId: string }) {
   const { t, plural } = useI18n();
   const f = useFormat();
-  const { data, loading, error } = useAsync(() => api.viewer(ytAuthorId), [ytAuthorId]);
+  const [round, setRound] = useState(0);
+  const { data, loading, error } = useAsync(() => api.viewer(ytAuthorId), [ytAuthorId, round]);
 
-  if (loading) return <Loading />;
-  if (error || !data) return <Empty>{t('state.error')}</Empty>;
+  if (loading) return <Loading rows={3} />;
+  if (error || !data) return <Failed onRetry={() => setRound((n) => n + 1)} />;
 
   const { viewer, comments } = data;
-  const tenure = Math.round(
-    (new Date(viewer.lastSeenAt).getTime() - new Date(viewer.firstSeenAt).getTime()) / 86_400_000,
-  );
 
   return (
     <>
@@ -56,7 +55,7 @@ export function ViewerProfile({ ytAuthorId }: { ytAuthorId: string }) {
           { value: viewer.commentCount, label: t('viewer.comments'), lead: true },
           { value: viewer.videosTouched, label: t('viewer.videos') },
           { value: viewer.totalLikes, label: t('viewer.likes') },
-          { value: tenure, label: t('viewer.tenureDays') },
+          { value: viewer.tenureDays, label: t('viewer.tenureDays') },
         ]}
       />
 

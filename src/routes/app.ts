@@ -1,16 +1,20 @@
 import { Hono } from 'hono';
-import { getCookie } from 'hono/cookie';
+import { deleteCookie, getCookie } from 'hono/cookie';
 import * as repo from '../db/repo.ts';
+import { isDemoChannel } from '../demo.ts';
 import { buildContext } from '../memory/context.ts';
 import { mindEnabled } from '../mind/client.ts';
 import { SESSION_COOKIE, verify } from '../session.ts';
-import { describeComment, segmentOf } from '../memory/segments.ts';
+import { describeComment, SEGMENT_THRESHOLDS, SEGMENTS, segmentOf } from '../memory/segments.ts';
 import { resolve, suggest, type Mention } from '../memory/mentions.ts';
 import * as chat from '../db/chat.ts';
 import { ask, history, type AskContext } from '../mind/ask.ts';
 import { steepestDropOffs } from '../youtube/analytics.ts';
 import { syncChannel, syncVideo } from '../youtube/sync.ts';
-import type { Channel } from '../types.ts';
+import { accessTokenFor, repliesEnabled } from '../youtube/oauth.ts';
+import { replyToComment } from '../youtube/data.ts';
+import { scheduleFor } from '../mind/checkpoints.ts';
+import type { Channel, Proposal } from '../types.ts';
 
 export const appRoutes = new Hono<{ Variables: { channel: Channel } }>();
 
@@ -22,6 +26,11 @@ appRoutes.use('*', async (c, next) => {
   await next();
 });
 
+appRoutes.post('/signout', (c) => {
+  deleteCookie(c, SESSION_COOKIE, { path: '/' });
+  return c.json({ ok: true });
+});
+
 appRoutes.get('/me', async (c) => {
   const channel = c.get('channel');
   return c.json({
@@ -30,14 +39,44 @@ appRoutes.get('/me', async (c) => {
     title: channel.title,
     connectedAt: channel.createdAt,
     reachThrough: channel.reachSyncedThrough,
+    lastSyncAt: channel.lastSyncAt,
+    syncFailing: channel.lastSyncError !== null,
+    demo: isDemoChannel(channel),
     mindEnabled,
+    repliesEnabled: repliesEnabled && !isDemoChannel(channel),
     counts: await repo.counts(channel.id),
   });
 });
 
-appRoutes.get('/ledger', async (c) => c.json(await buildContext(c.get('channel'))));
+appRoutes.get('/ledger', async (c) => {
+  const channel = c.get('channel');
+  // buildContext is the Mind's briefing and stays exactly as it is; the scored series is
+  // an extra the dashboard draws from
+  const [context, scores] = await Promise.all([
+    buildContext(channel),
+    repo.experimentScores(channel.id),
+  ]);
+  return c.json({ ...context, scores });
+});
 
 appRoutes.get('/activity', async (c) => c.json(await repo.recentActivity(c.get('channel').id)));
+
+// everything that touched this channel's memory, in order, with the unattended work marked
+appRoutes.get('/timeline', async (c) => {
+  const channel = c.get('channel');
+  const before = c.req.query('before');
+  const [events, accuracy, totals] = await Promise.all([
+    repo.timeline(channel.id, {
+      limit: Number(c.req.query('limit')) || 60,
+      before: before ? new Date(before) : undefined,
+      automatedOnly: c.req.query('automated') === '1',
+    }),
+    repo.accuracy(channel.id),
+    repo.memoryTotals(channel.id),
+  ]);
+
+  return c.json({ events, accuracy, totals });
+});
 
 appRoutes.get('/videos', async (c) => {
   const channel = c.get('channel');
@@ -65,13 +104,28 @@ appRoutes.get('/videos', async (c) => {
   );
 });
 
+/**
+ * A sparkline needs the shape, not the values: normalise against the video's own peak and
+ * thin it to at most twelve points so a card carries a glyph rather than a dataset.
+ */
+function shape(views: number[]): number[] {
+  if (views.length < 3) return [];
+  const peak = Math.max(...views);
+  if (peak === 0) return [];
+
+  const step = Math.max(1, Math.ceil(views.length / 12));
+  return views.filter((_, index) => index % step === 0 || index === views.length - 1)
+    .map((value) => Number((value / peak).toFixed(3)));
+}
+
 // the feed: each video is a post, carrying the conversation that formed under it
 appRoutes.get('/feed', async (c) => {
   const channel = c.get('channel');
   const videos = await repo.listVideos(channel.id, 30);
-  const [snapshots, counts] = await Promise.all([
+  const [snapshots, counts, trajectories] = await Promise.all([
     repo.latestSnapshots(videos.map((v) => v.id)),
     repo.commentCounts(channel.id),
+    repo.viewTrajectories(videos.map((v) => v.id)),
   ]);
   const byVideo = new Map(snapshots.map((s) => [s.videoId, s]));
 
@@ -91,6 +145,7 @@ appRoutes.get('/feed', async (c) => {
         avgViewPct: snap?.avgViewPct ?? null,
         subscribersGained: snap?.subscribersGained ?? null,
         commentCount: counts.get(video.id) ?? 0,
+        trajectory: shape(trajectories.get(video.id) ?? []),
         topComments: top.map(describeComment),
       };
     }),
@@ -211,6 +266,10 @@ appRoutes.get('/viewers/:ytAuthorId', async (c) => {
       commentCount: viewer.commentCount,
       firstSeenAt: viewer.firstSeenAt,
       lastSeenAt: viewer.lastSeenAt,
+      // the same span the audience list shows, computed once so the two cannot disagree
+      tenureDays: Math.round(
+        (viewer.lastSeenAt.getTime() - viewer.firstSeenAt.getTime()) / 86_400_000,
+      ),
       segment: segmentOf({
         viewerCommentCount: viewer.commentCount,
         viewerFirstSeenAt: viewer.firstSeenAt,
@@ -235,11 +294,14 @@ appRoutes.post('/viewers/:ytAuthorId/ask', async (c) => {
   const mentions = readMentions(body);
   const extra = await resolve(channel, mentions);
 
+  // chat_threads.alias is unique across every channel, but a viewer id is only unique
+  // within one, so the channel has to be part of the key
+  const alias = `viewer-${channel.id}-${viewer.ytAuthorId}`;
   const thread = await chat.ensureThread({
     channelId: channel.id,
     subjectKind: 'viewer',
     subjectId: viewer.ytAuthorId,
-    alias: `viewer-${viewer.ytAuthorId}`,
+    alias,
     title: viewer.displayName,
   });
   await chat.appendMessage(thread.id, 'creator', question, [
@@ -249,7 +311,7 @@ appRoutes.post('/viewers/:ytAuthorId/ask', async (c) => {
 
   const answer = await ask(
     {
-      alias: `viewer-${viewer.ytAuthorId}`,
+      alias,
         channelTitle: channel.title,
         ytVideoId: '',
         title: `the viewer ${viewer.displayName}`,
@@ -339,17 +401,86 @@ appRoutes.get('/videos/:ytVideoId', async (c) => {
   });
 });
 
+appRoutes.get('/replies', async (c) => {
+  const channel = c.get('channel');
+  const queue = await repo.replyQueue(channel.id);
+  return c.json({
+    enabled: repliesEnabled && !isDemoChannel(channel),
+    queue: queue.map((target) => ({ ...target, segment: segmentOf(target) })),
+  });
+});
+
+/** The Mind writes the draft; the creator is the only thing that can publish it. */
+appRoutes.post('/comments/:ytCommentId/draft', async (c) => {
+  const channel = c.get('channel');
+  const target = await repo.commentOwner(channel.id, c.req.param('ytCommentId'));
+  if (!target) return c.json({ error: 'comment not found' }, 404);
+
+  const [about] = await resolve(channel, [{ kind: 'viewer', id: (await c.req.json().catch(() => ({}))).ytAuthorId ?? '' }]);
+
+  return c.json(
+    await ask(
+      {
+        alias: `reply-${c.req.param('ytCommentId')}`,
+        channelTitle: channel.title,
+        ytVideoId: '',
+        title: target.videoTitle,
+        publishedAt: new Date().toISOString(),
+        metrics: {},
+        dropOffs: null,
+        segments: {},
+        comments: [],
+        extra: [about ?? '', `COMMENT from ${target.displayName}: ${target.text}`].filter(Boolean),
+      },
+      'Draft a reply I can send as the creator. Match how this channel already talks to ' +
+        'people. One or two sentences, no emoji unless the comment used one, answer the ' +
+        'actual question. Return only the reply text.',
+    ),
+  );
+});
+
+appRoutes.post('/comments/:ytCommentId/reply', async (c) => {
+  if (!repliesEnabled) return c.json({ error: 'replies are switched off' }, 403);
+
+  const channel = c.get('channel');
+  if (isDemoChannel(channel)) return c.json({ error: 'demo-read-only' }, 403);
+
+  const ytCommentId = c.req.param('ytCommentId');
+  const target = await repo.commentOwner(channel.id, ytCommentId);
+  if (!target) return c.json({ error: 'comment not found' }, 404);
+
+  const body = await c.req.json().catch(() => ({}));
+  const text = typeof body?.text === 'string' ? body.text.trim() : '';
+  if (text.length < 2) return c.json({ error: 'write something' }, 400);
+
+  const token = await accessTokenFor(channel);
+  const posted = await replyToComment(token, ytCommentId, text);
+  await repo.markReplied(ytCommentId, text, posted.ytCommentId);
+  await repo.setTriage(ytCommentId, 'answered');
+
+  return c.json({ ok: true, ytCommentId: posted.ytCommentId });
+});
+
 appRoutes.get('/audience', async (c) => {
   const channel = c.get('channel');
-  const [fans, queue] = await Promise.all([
-    repo.superfans(channel.id),
+  const asked = c.req.query('segment');
+  const segment = SEGMENTS.includes(asked as never) ? asked! : null;
+  const limit = Math.min(Math.max(Number(c.req.query('limit')) || 40, 1), 200);
+
+  // the tier counts come from every viewer, not from the page we happen to be showing —
+  // a chip that says "20" when the channel has 900 regulars is worse than no chip
+  const [people, counts, queue] = await Promise.all([
+    repo.viewersBySegment(channel.id, SEGMENT_THRESHOLDS, segment, limit),
+    repo.segmentCounts(channel.id, SEGMENT_THRESHOLDS),
     repo.triageCandidates(channel.id, 25),
   ]);
+
   return c.json({
-    superfans: fans.map((fan) => ({
+    superfans: people.map((fan) => ({
       ...fan,
       segment: segmentOf({ viewerCommentCount: fan.commentCount, viewerFirstSeenAt: fan.firstSeenAt }),
     })),
+    segmentCounts: counts,
     queue: queue.map((comment) => ({ ...comment, segment: segmentOf(comment) })),
   });
 });
@@ -359,15 +490,60 @@ appRoutes.get('/proposals', async (c) =>
 );
 
 appRoutes.post('/proposals/:id/decide', async (c) => {
+  const channel = c.get('channel');
   const body = await c.req.json().catch(() => ({}));
   const status = body?.status === 'approved' ? 'approved' : 'dismissed';
   const choice = typeof body?.choice === 'string' ? body.choice : null;
 
   const proposal = await repo.decideProposal(c.req.param('id'), status, choice);
   if (!proposal) return c.json({ error: 'proposal not found or already decided' }, 404);
-  return c.json(proposal);
+
+  // This is the COMMIT step of the loop: the creator picking a concept is what puts the
+  // Mind's number on the record. Until now only the Mind could open an experiment, so the
+  // one decision the product is built around had no way in.
+  const opened =
+    status === 'approved' && proposal.kind === 'experiment'
+      ? await openFromProposal(channel.id, proposal, choice)
+      : null;
+
+  return c.json({ ...proposal, opened });
 });
 
-appRoutes.post('/sync', async (c) =>
-  c.json(await syncChannel(c.get('channel'), { videoLimit: 25, withComments: true })),
-);
+async function openFromProposal(
+  channelId: string,
+  proposal: Proposal,
+  choice: string | null,
+): Promise<{ experimentId: string; checkpoints: number } | null> {
+  const payload = proposal.payload;
+  if (!payload?.concepts.length) return null;
+
+  const concept = payload.concepts.find((item) => item.label === choice) ?? payload.concepts[0]!;
+  const named = payload.ytVideoId ? await repo.getVideo(payload.ytVideoId) : undefined;
+  const target =
+    named?.channelId === channelId
+      ? named
+      : proposal.videoId
+        ? await repo.getVideoById(proposal.videoId)
+        : undefined;
+
+  const experiment = await repo.createExperiment({
+    channelId,
+    videoId: null,
+    lever: payload.lever,
+    hypothesis: concept.hypothesis,
+    prediction: concept.prediction,
+  });
+
+  // same path the Mind takes: attaching is what moves it to 'measuring' and starts the clock
+  if (!target) return { experimentId: experiment.id, checkpoints: 0 };
+
+  await repo.attachVideo(experiment.id, target.id);
+  const checkpoints = await repo.createCheckpoints(experiment.id, scheduleFor(target.publishedAt));
+  return { experimentId: experiment.id, checkpoints: checkpoints.length };
+}
+
+appRoutes.post('/sync', async (c) => {
+  const channel = c.get('channel');
+  if (isDemoChannel(channel)) return c.json({ error: 'demo-read-only' }, 403);
+  return c.json(await syncChannel(channel, { videoLimit: 25, withComments: true }));
+});

@@ -1,0 +1,21 @@
+# Postgres for anyone who has Docker. On a machine without WSL, installing native
+# Postgres is faster than installing Docker Desktop — see docs/05-integration.md §6b.
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: growth
+      POSTGRES_PASSWORD: growth
+      POSTGRES_DB: growth_compass
+    ports:
+      - '5432:5432'
+    volumes:
+      - db:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U growth -d growth_compass']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  db:

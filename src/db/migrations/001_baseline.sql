@@ -157,3 +157,7 @@ create table if not exists chat_refs (
   primary key (message_id, kind, ref_id)
 );
 create index if not exists chat_refs_lookup on chat_refs (kind, ref_id);
+
+alter table comments add column if not exists replied_at timestamptz;
+alter table comments add column if not exists reply_text text;
+alter table comments add column if not exists reply_yt_id text;

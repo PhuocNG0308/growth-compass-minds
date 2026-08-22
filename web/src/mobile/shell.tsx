@@ -2,13 +2,14 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   BrainCircuit,
   FlaskConical,
-  Home,
   Inbox as InboxIcon,
+  LayoutGrid,
   LogOut,
   MoreHorizontal,
   RefreshCw,
   Users,
 } from 'lucide-react';
+import { Logo } from '@/components/shell';
 import { LocaleToggle, ThemeToggle } from '@/components/controls';
 import { useToast } from '@/components/toast';
 import { Sheet } from '@/mobile/kit';
@@ -18,7 +19,7 @@ import { cn, focusRing } from '@/lib/utils';
 import type { Me } from '@/lib/types';
 
 const TABS = [
-  { href: '#/', key: 'nav.feed', icon: Home },
+  { href: '#/', key: 'nav.feed', icon: LayoutGrid },
   { href: '#/inbox', key: 'nav.inbox', icon: InboxIcon },
   { href: '#/lab', key: 'nav.lab', icon: FlaskConical },
   { href: '#/memory', key: 'nav.memory', icon: BrainCircuit },
@@ -33,11 +34,13 @@ const TABS = [
 export function MobileShell({
   me,
   route,
+  title,
   banner,
   children,
 }: {
   me: Me;
   route: string;
+  title?: string;
   banner?: ReactNode;
   children: ReactNode;
 }) {
@@ -85,24 +88,24 @@ export function MobileShell({
 
   return (
     <div className="min-h-dvh">
-      <header ref={chrome} className="bg-background/90 safe-x sticky top-0 z-30 border-b backdrop-blur">
-        <div className="flex items-center gap-2 px-4 py-3">
-          <span className="bg-primary size-2 shrink-0 rounded-full" />
-          <span className="min-w-0 flex-1 truncate text-base font-semibold tracking-tight">
+      <header ref={chrome} className="bg-background safe-x sticky top-0 z-30 border-b">
+        <div className="flex items-center gap-2 px-4 py-2">
+          <Logo />
+          <span className="min-w-0 flex-1 truncate text-base font-medium tracking-tight">
             {me.title}
           </span>
           <button
             onClick={sync}
             disabled={syncing}
             aria-label={t('shell.sync')}
-            className={cn(focusRing, 'text-muted-foreground grid size-11 place-items-center rounded-full')}
+            className={cn(focusRing, 'grid size-11 place-items-center rounded-full')}
           >
             <RefreshCw className={cn('size-5', syncing && 'animate-spin')} />
           </button>
           <button
             onClick={() => setMenu(true)}
             aria-label={t('shell.more')}
-            className={cn(focusRing, 'text-muted-foreground grid size-11 place-items-center rounded-full')}
+            className={cn(focusRing, 'grid size-11 place-items-center rounded-full')}
           >
             <MoreHorizontal className="size-5" />
           </button>
@@ -110,9 +113,12 @@ export function MobileShell({
         {banner}
       </header>
 
-      <main className="safe-x pt-4 pb-[calc(var(--tabs,64px)+2rem)]">{children}</main>
+      <main className="safe-x pt-4 pb-[calc(var(--tabs,64px)+2rem)]">
+        {title && <h1 className="mb-4 px-4 text-xl font-normal tracking-tight">{title}</h1>}
+        {children}
+      </main>
 
-      <nav ref={tabs} className="bg-background/95 safe-b safe-x fixed inset-x-0 bottom-0 z-30 flex border-t backdrop-blur">
+      <nav ref={tabs} className="bg-background safe-b safe-x fixed inset-x-0 bottom-0 z-30 flex border-t">
         {TABS.map(({ href, key, icon: Icon }) => {
           const active = route === href;
           return (
@@ -122,19 +128,14 @@ export function MobileShell({
               aria-current={active ? 'page' : undefined}
               className={cn(
                 focusRing,
-                'flex min-h-14 flex-1 flex-col items-center justify-center gap-1 text-[10px] font-medium',
-                active ? 'text-primary' : 'text-muted-foreground',
+                'flex min-h-14 flex-1 flex-col items-center justify-center gap-1 text-[10px]',
+                active ? 'text-foreground font-medium' : 'text-muted-foreground',
               )}
             >
-              <span
-                className={cn(
-                  'relative rounded-full px-4 py-1 transition-colors',
-                  active && 'bg-primary/15',
-                )}
-              >
-                <Icon className="size-5" />
+              <span className="relative">
+                <Icon className="size-6" strokeWidth={active ? 2.4 : 1.8} />
                 {href === '#/inbox' && waiting > 0 && (
-                  <span className="bg-primary absolute top-0 right-2 size-2 rounded-full" />
+                  <span className="bg-brand absolute -top-1 -right-1 size-2 rounded-full" />
                 )}
               </span>
               {t(key)}
@@ -155,7 +156,7 @@ export function MobileShell({
           <a
             href="#/chats"
             onClick={() => setMenu(false)}
-            className={cn(focusRing, 'flex min-h-12 items-center rounded-xl border px-4 font-medium')}
+            className={cn(focusRing, 'flex min-h-12 items-center rounded-full border px-5 font-medium')}
           >
             {t('rail.allChats')}
           </a>
@@ -167,7 +168,7 @@ export function MobileShell({
             }}
             className={cn(
               focusRing,
-              'text-destructive flex min-h-12 w-full items-center gap-3 rounded-xl border px-4 font-medium',
+              'text-destructive flex min-h-12 w-full items-center gap-3 rounded-full border px-5 font-medium',
             )}
           >
             <LogOut className="size-5" />
@@ -176,7 +177,7 @@ export function MobileShell({
 
           <p className="text-muted-foreground flex items-center gap-2 text-xs">
             <span
-              className={cn('size-2 rounded-full', me.mindEnabled ? 'bg-primary' : 'bg-muted-foreground')}
+              className={cn('size-2 rounded-full', me.mindEnabled ? 'bg-success' : 'bg-muted-foreground')}
             />
             {me.mindEnabled ? t('shell.mindOn') : t('shell.mindOff')}
           </p>

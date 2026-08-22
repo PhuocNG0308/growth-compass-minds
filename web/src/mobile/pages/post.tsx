@@ -116,7 +116,7 @@ export function MobilePost({ ytVideoId, focusAsk }: { ytVideoId: string; focusAs
                     focusRing,
                     'min-h-11 rounded-full border px-4 text-sm font-medium',
                     key === filter
-                      ? 'border-primary bg-primary/12 text-primary'
+                      ? 'bg-foreground text-background'
                       : 'text-muted-foreground',
                   )}
                 >
@@ -198,7 +198,7 @@ function Trajectory({ history }: { history: Snapshot[] }) {
             className={cn(
               focusRing,
               'min-h-9 flex-1 rounded-full border px-2 text-xs font-medium',
-              key === metric ? 'border-primary bg-primary/12 text-primary' : 'text-muted-foreground',
+              key === metric ? 'bg-foreground text-background' : 'text-muted-foreground',
             )}
           >
             {t(`metric.${key}`)}

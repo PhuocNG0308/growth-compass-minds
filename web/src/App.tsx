@@ -29,12 +29,22 @@ const ROUTES = ['#/', '#/inbox', '#/lab', '#/memory', '#/audience', '#/chats'];
 // screens reached from a tab keep that tab lit, so the nav never goes blank under you
 const OWNER: Record<string, string> = { '#/chats': '#/inbox' };
 
+const TITLES: Record<string, string> = {
+  '#/': 'title.feed',
+  '#/inbox': 'title.inbox',
+  '#/lab': 'title.lab',
+  '#/memory': 'title.memory',
+  '#/audience': 'title.audience',
+  '#/chats': 'title.chats',
+};
+
 /**
  * Phone and desktop are two builds of the same product, not one layout squeezed. They share
  * the data layer, the strings and the formatters; the information architecture is where they
  * part company, so the split happens here and each side stays readable on its own.
  */
 export default function App() {
+  const { t } = useI18n();
   const hash = useHash();
   const mobile = useIsMobile();
   const { data: me, error, loading } = useAsync(() => api.me(), []);
@@ -64,13 +74,21 @@ export default function App() {
         : '#/';
 
   const view = { hash, route, detail, person, me };
+  // a detail screen names itself in its own heading, so the shell stays quiet there
+  const title = detail || person ? undefined : t(TITLES[hash] ?? TITLES[route]!);
 
   return mobile ? (
-    <MobileShell me={me} route={route} banner={<DemoBanner show={me.demo} />}>
+    <MobileShell me={me} route={route} title={title} banner={<DemoBanner show={me.demo} />}>
       <MobileScreen {...view} />
     </MobileShell>
   ) : (
-    <Shell me={me} route={route} banner={<DemoBanner show={me.demo} />} rail={<Rail me={me} />}>
+    <Shell
+      me={me}
+      route={route}
+      title={title}
+      banner={<DemoBanner show={me.demo} />}
+      rail={<Rail me={me} />}
+    >
       <DesktopScreen {...view} />
     </Shell>
   );

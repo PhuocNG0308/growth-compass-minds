@@ -2,9 +2,10 @@ import { useState, type ReactNode } from 'react';
 import {
   BrainCircuit,
   FlaskConical,
-  Home,
   Inbox as InboxIcon,
+  LayoutGrid,
   LogOut,
+  Menu,
   Monitor,
   RefreshCw,
   RotateCw,
@@ -21,7 +22,7 @@ import { cn, focusRing } from '@/lib/utils';
 import type { Me } from '@/lib/types';
 
 const TABS = [
-  { href: '#/', key: 'nav.feed', icon: Home },
+  { href: '#/', key: 'nav.feed', icon: LayoutGrid },
   { href: '#/inbox', key: 'nav.inbox', icon: InboxIcon },
   { href: '#/lab', key: 'nav.lab', icon: FlaskConical },
   { href: '#/memory', key: 'nav.memory', icon: BrainCircuit },
@@ -30,15 +31,22 @@ const TABS = [
 
 const COLUMN = 'mx-auto w-[420px] max-w-full';
 
+/**
+ * Navigation lives in one column down the left, the way a studio console does, so the top
+ * edge carries only the channel and the few controls that act on all of it, and the content
+ * starts at a clean left margin instead of underneath a row of tabs.
+ */
 export function Shell({
   me,
   route,
+  title,
   banner,
   rail,
   children,
 }: {
   me: Me;
   route: string;
+  title?: string;
   banner?: ReactNode;
   rail?: ReactNode;
   children: ReactNode;
@@ -46,6 +54,7 @@ export function Shell({
   const { t } = useI18n();
   const notify = useToast();
   const [narrow, setNarrow] = useState(false);
+  const [wide, setWide] = useState(true);
   const [syncing, setSyncing] = useState(false);
 
   async function sync() {
@@ -63,151 +72,191 @@ export function Shell({
   const waitingCount = me.counts.waiting + me.counts.overdue;
 
   // forcing the phone layout on a desktop means forcing its navigation too
-  const topNav = narrow ? 'hidden' : 'hidden desktop:flex';
+  const sidebar = narrow ? 'hidden' : 'hidden desktop:flex';
   const bottomNav = narrow ? 'flex' : 'flex desktop:hidden';
 
   return (
-    <div className={cn('min-h-dvh', narrow && 'bg-muted/40')}>
+    // The console holds its own height and scrolls the content pane, not the window, so the
+    // sidebar and the rail never have to guess how tall the header grew with the banner in it.
+    <div className={cn('flex h-dvh flex-col', narrow && 'bg-muted/40')}>
       <header
-        className={cn(
-          'bg-background/85 safe-x sticky top-0 z-20 border-b backdrop-blur',
-          narrow && `${COLUMN} border-x`,
-        )}
+        className={cn('bg-background safe-x z-30 shrink-0 border-b', narrow && `${COLUMN} border-x`)}
       >
-        <div className="@container mx-auto max-w-7xl px-4 @2xl:px-6">
-          <div className="flex items-center gap-2 py-4">
-            <div className="mr-auto flex min-w-0 items-center gap-3">
-              <span className="bg-primary size-3 shrink-0 rounded-full" />
-              <span className="truncate text-lg font-semibold tracking-tight">{me.title}</span>
-            </div>
+        <div className="@container flex items-center gap-2 px-4">
+          <button
+            onClick={() => setWide((on) => !on)}
+            aria-label={t('shell.menu')}
+            aria-expanded={wide}
+            className={cn(
+              focusRing,
+              'hover:bg-accent size-10 place-items-center rounded-full',
+              narrow ? 'hidden' : 'hidden desktop:grid',
+            )}
+          >
+            <Menu className="size-5" />
+          </button>
 
-            <LocaleToggle />
-
-            <Button
-              variant="outline"
-              size="icon"
-              aria-label={t('shell.signOut')}
-              title={t('shell.signOut')}
-              onClick={async () => {
-                await api.signOut();
-                location.reload();
-              }}
-            >
-              <LogOut />
-            </Button>
-
-            <ThemeToggle />
-
-            <Button
-              variant="outline"
-              size="icon"
-              aria-label={t('shell.viewport')}
-              title={t('shell.viewport')}
-              onClick={() => setNarrow((on) => !on)}
-              className="hidden desktop:inline-flex"
-            >
-              {narrow ? <Monitor /> : <Smartphone />}
-            </Button>
-
-            <Button
-              variant="outline"
-              onClick={sync}
-              disabled={syncing}
-              size="icon"
-              className="@md:w-auto @md:px-4"
-            >
-              <RefreshCw className={cn(syncing && 'animate-spin')} />
-              <span className="hidden @md:inline">{syncing ? t('shell.syncing') : t('shell.sync')}</span>
-            </Button>
+          <div className="mr-auto flex min-w-0 items-center gap-2 py-3">
+            <Logo />
+            <span className="truncate text-lg font-medium tracking-tight">{me.title}</span>
           </div>
 
-          <nav className={cn('gap-1', topNav)}>
-            {TABS.map(({ href, key }) => (
-              <a
-                key={href}
-                href={href}
-                className={cn(
-                  focusRing,
-                  'flex items-center gap-2 border-b-[3px] px-4 py-3 text-[15px] font-medium transition-colors',
-                  route === href
-                    ? 'border-primary text-primary'
-                    : 'text-muted-foreground border-transparent hover:text-foreground',
-                )}
-              >
-                {t(key)}
-                {href === '#/inbox' && <Waiting me={me} />}
-              </a>
-            ))}
-          </nav>
+          <LocaleToggle />
+          <ThemeToggle />
+
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={t('shell.viewport')}
+            title={t('shell.viewport')}
+            onClick={() => setNarrow((on) => !on)}
+            className="hidden desktop:inline-flex"
+          >
+            {narrow ? <Monitor /> : <Smartphone />}
+          </Button>
+
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={t('shell.signOut')}
+            title={t('shell.signOut')}
+            onClick={async () => {
+              await api.signOut();
+              location.reload();
+            }}
+          >
+            <LogOut />
+          </Button>
+
+          <Button variant="outline" onClick={sync} disabled={syncing} size="icon" className="@md:w-auto @md:px-4">
+            <RefreshCw className={cn(syncing && 'animate-spin')} />
+            <span className="hidden @md:inline">{syncing ? t('shell.syncing') : t('shell.sync')}</span>
+          </Button>
         </div>
         {banner}
       </header>
 
-      <div
-        className={cn(
-          'safe-x mx-auto flex max-w-7xl gap-8 px-4 @2xl:px-6',
-          narrow && `${COLUMN} !px-0`,
-        )}
-      >
-        <main
+      <div className={cn('safe-x flex min-h-0 flex-1', narrow && `${COLUMN} !px-0`)}>
+        <aside
           className={cn(
-            '@container min-w-0 flex-1 pt-6 pb-32',
-            narrow ? 'border-x px-4' : 'desktop:pb-16',
+            'shrink-0 flex-col overflow-y-auto border-r py-3',
+            sidebar,
+            wide ? 'w-60' : 'w-20',
           )}
         >
-          {children}
+          {wide && (
+            <div className="flex flex-col items-center gap-1 px-4 pt-4 pb-6">
+              <span className="bg-muted text-muted-foreground grid size-20 place-items-center rounded-full text-2xl font-medium">
+                {me.title.trim().charAt(0).toUpperCase()}
+              </span>
+              <span className="mt-3 text-sm font-medium">{t('shell.yourChannel')}</span>
+              <span className="text-muted-foreground max-w-full truncate text-xs">{me.title}</span>
+            </div>
+          )}
 
-          <div className="text-muted-foreground mt-12 flex items-center gap-2 text-xs">
+          <nav className="flex flex-col">
+            {TABS.map(({ href, key, icon: Icon }) => {
+              const active = route === href;
+              return (
+                <a
+                  key={href}
+                  href={href}
+                  aria-current={active ? 'page' : undefined}
+                  title={wide ? undefined : t(key)}
+                  className={cn(
+                    focusRing,
+                    'flex items-center transition-colors',
+                    active ? 'bg-accent font-medium' : 'text-muted-foreground hover:bg-accent',
+                    wide ? 'h-10 gap-6 px-6 text-sm' : 'flex-col justify-center gap-1 py-4 text-[10px]',
+                  )}
+                >
+                  <span className="relative">
+                    <Icon className={cn('size-5 shrink-0', active && 'text-foreground')} />
+                    {!wide && href === '#/inbox' && waitingCount > 0 && (
+                      <span className="bg-brand absolute -top-1 -right-1 size-2 rounded-full" />
+                    )}
+                  </span>
+                  <span className={cn('truncate', active && 'text-foreground')}>{t(key)}</span>
+                  {wide && href === '#/inbox' && <Waiting me={me} />}
+                </a>
+              );
+            })}
+          </nav>
+
+          <div
+            className={cn(
+              'text-muted-foreground mt-auto flex items-center gap-2 border-t pt-4 text-xs',
+              wide ? 'px-6' : 'justify-center px-2',
+            )}
+          >
             <span
-              className={cn('size-2 rounded-full', me.mindEnabled ? 'bg-primary' : 'bg-muted-foreground')}
+              className={cn('size-2 shrink-0 rounded-full', me.mindEnabled ? 'bg-success' : 'bg-muted-foreground')}
             />
-            {me.mindEnabled ? t('shell.mindOn') : t('shell.mindOff')}
+            {wide && <span className="truncate">{me.mindEnabled ? t('shell.mindOn') : t('shell.mindOff')}</span>}
           </div>
-        </main>
+        </aside>
 
-        {/* the empty margins on a wide screen carry context instead of stretching the feed */}
-        {rail && !narrow && (
-          <aside className="hidden w-80 shrink-0 py-6 xl:block">
-            {/* the sticky offset has to clear the header, and the banner makes it taller */}
-            <div className={cn('sticky space-y-8', banner ? 'top-44' : 'top-32')}>{rail}</div>
-          </aside>
-        )}
+        <div className="flex min-w-0 flex-1 overflow-y-auto">
+          <main
+            className={cn(
+              '@container min-w-0 flex-1 pt-6 pb-32',
+              narrow ? 'border-x px-4' : 'px-6 desktop:pb-16',
+            )}
+          >
+            {title && <h1 className="mb-6 text-2xl font-normal tracking-tight">{title}</h1>}
+            {children}
+          </main>
+
+          {/* the empty margin on a wide screen carries context instead of stretching the feed */}
+          {rail && !narrow && (
+            <aside className="hidden w-80 shrink-0 py-6 pr-6 xl:block">
+              <div className="sticky top-0 space-y-8">{rail}</div>
+            </aside>
+          )}
+        </div>
       </div>
 
       <nav
         className={cn(
-          'bg-background/95 safe-b safe-x fixed inset-x-0 bottom-0 z-30 border-t backdrop-blur',
+          'bg-background safe-b safe-x fixed inset-x-0 bottom-0 z-30 border-t',
           bottomNav,
           narrow && 'left-1/2 w-[420px] max-w-full -translate-x-1/2 border-x',
         )}
       >
-        {TABS.map(({ href, key, icon: Icon }) => (
-          <a
-            key={href}
-            href={href}
-            aria-current={route === href ? 'page' : undefined}
-            className={cn(
-              focusRing,
-              'flex flex-1 flex-col items-center gap-1 py-3 text-[11px] font-medium transition-colors',
-              route === href ? 'text-primary' : 'text-muted-foreground',
-            )}
-          >
-            <span
+        {TABS.map(({ href, key, icon: Icon }) => {
+          const active = route === href;
+          return (
+            <a
+              key={href}
+              href={href}
+              aria-current={active ? 'page' : undefined}
               className={cn(
-                'relative rounded-full px-4 py-1 transition-colors',
-                route === href && 'bg-primary/15',
+                focusRing,
+                'flex flex-1 flex-col items-center gap-1 py-3 text-[10px] transition-colors',
+                active ? 'text-foreground font-medium' : 'text-muted-foreground',
               )}
             >
-              <Icon className="size-5" />
-              {href === '#/inbox' && waitingCount > 0 && (
-                <span className="bg-primary absolute top-0 right-2 size-2 rounded-full" />
-              )}
-            </span>
-            {t(key)}
-          </a>
-        ))}
+              <span className="relative">
+                <Icon className="size-6" strokeWidth={active ? 2.4 : 1.8} />
+                {href === '#/inbox' && waitingCount > 0 && (
+                  <span className="bg-brand absolute -top-1 -right-1 size-2 rounded-full" />
+                )}
+              </span>
+              {t(key)}
+            </a>
+          );
+        })}
       </nav>
     </div>
+  );
+}
+
+/** The one place the brand red is allowed to appear. */
+export function Logo() {
+  return (
+    <span className="bg-brand grid h-5 w-7 shrink-0 place-items-center rounded-sm">
+      <span className="border-y-4 border-l-[7px] border-y-transparent border-l-white" />
+    </span>
   );
 }
 
@@ -217,7 +266,7 @@ function Waiting({ me }: { me: Me }) {
   if (count === 0) return null;
 
   return (
-    <span className="bg-primary text-primary-foreground tabular rounded-full px-2 py-1 text-xs font-semibold leading-none">
+    <span className="bg-brand tabular ml-auto rounded-full px-2 py-1 text-xs leading-none font-medium text-white">
       {count}
     </span>
   );
@@ -226,7 +275,7 @@ function Waiting({ me }: { me: Me }) {
 export function SectionTitle({ children, action }: { children: ReactNode; action?: ReactNode }) {
   return (
     <div className="mt-8 mb-4 flex items-center justify-between gap-4 first:mt-0">
-      <h2 className="text-xl font-semibold tracking-tight @md:text-2xl">{children}</h2>
+      <h2 className="text-base font-medium">{children}</h2>
       {action}
     </div>
   );
@@ -236,7 +285,7 @@ export function SectionTitle({ children, action }: { children: ReactNode; action
 export function SubTitle({ children, action }: { children: ReactNode; action?: ReactNode }) {
   return (
     <div className="mt-10 mb-3 flex items-center justify-between gap-4">
-      <h2 className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">{children}</h2>
+      <h2 className="text-muted-foreground text-xs font-medium tracking-wide uppercase">{children}</h2>
       {action}
     </div>
   );
@@ -252,7 +301,7 @@ export function Chips({
   onChange: (key: string) => void;
 }) {
   return (
-    <div className="mb-4 flex gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+    <div className="mb-6 flex gap-3 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
       {options.map(({ key, label, count }) => (
         <button
           key={key}
@@ -260,10 +309,10 @@ export function Chips({
           aria-pressed={key === value}
           className={cn(
             focusRing,
-            'shrink-0 rounded-full border px-4 py-2 text-sm font-medium transition-colors',
+            'shrink-0 rounded-full px-4 py-2 text-sm font-medium transition-colors',
             key === value
-              ? 'border-primary bg-primary/12 text-primary'
-              : 'text-muted-foreground hover:text-foreground',
+              ? 'bg-foreground text-background'
+              : 'bg-secondary text-foreground hover:bg-input',
           )}
         >
           {label}
@@ -275,7 +324,7 @@ export function Chips({
 }
 
 export function RailTitle({ children }: { children: ReactNode }) {
-  return <h3 className="text-muted-foreground mb-3 text-xs font-semibold tracking-wide uppercase">{children}</h3>;
+  return <h3 className="mb-3 text-base font-medium">{children}</h3>;
 }
 
 /**
@@ -287,7 +336,7 @@ export function List({ children }: { children: ReactNode }) {
 }
 
 export function Empty({ children }: { children: ReactNode }) {
-  return <div className="bg-muted text-muted-foreground rounded-2xl px-4 py-6 text-[15px]">{children}</div>;
+  return <div className="text-muted-foreground rounded-xl border px-4 py-8 text-center">{children}</div>;
 }
 
 /** A failed request is not an empty one, so it never borrows the empty state's wording. */
@@ -295,8 +344,8 @@ export function Failed({ onRetry }: { onRetry?: () => void }) {
   const { t } = useI18n();
 
   return (
-    <div className="border-destructive/30 bg-destructive/5 rounded-2xl border px-4 py-6">
-      <p className="text-[15px]">{t('state.error')}</p>
+    <div className="border-destructive/30 rounded-xl border px-4 py-6">
+      <p className="text-destructive">{t('state.error')}</p>
       {onRetry && (
         <Button variant="outline" size="sm" className="mt-4" onClick={onRetry}>
           <RotateCw />
@@ -311,7 +360,7 @@ export function Loading({ rows = 2, height = 'h-56' }: { rows?: number; height?:
   return (
     <div className="space-y-4" aria-busy="true">
       {Array.from({ length: rows }, (_, index) => (
-        <Skeleton key={index} className={cn('w-full rounded-2xl', height)} />
+        <Skeleton key={index} className={cn('w-full rounded-xl', height)} />
       ))}
     </div>
   );

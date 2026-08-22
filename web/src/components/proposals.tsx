@@ -100,7 +100,7 @@ function ProposalRow({ proposal, onDecided }: { proposal: Proposal; onDecided: (
                     focusRing,
                     'rounded-lg border px-3 py-2 text-sm',
                     option === choice
-                      ? 'border-primary bg-primary/12 text-primary'
+                      ? 'bg-foreground text-background'
                       : 'text-muted-foreground hover:text-foreground',
                   )}
                 >

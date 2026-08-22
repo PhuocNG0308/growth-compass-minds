@@ -179,7 +179,7 @@ function Settled({ experiment }: { experiment: SettledExperiment }) {
         <span
           className={cn(
             'rounded-full px-3 py-1 text-xs font-semibold',
-            verdict === 'confirmed' && 'bg-primary/15 text-primary',
+            verdict === 'confirmed' && 'bg-success/12 text-success',
             verdict === 'refuted' && 'bg-destructive/12 text-destructive',
             verdict === 'inconclusive' && 'bg-muted text-muted-foreground',
           )}

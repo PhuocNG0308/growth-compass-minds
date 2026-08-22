@@ -131,7 +131,7 @@ function ReplyRow({
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <a
             href={`#/viewer/${encodeURIComponent(target.ytAuthorId)}`}
-            className={cn(focusRing, 'hover:text-primary text-sm font-semibold')}
+            className={cn(focusRing, 'text-sm font-semibold hover:underline')}
           >
             {target.displayName}
           </a>

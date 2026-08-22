@@ -82,7 +82,7 @@ export function MobileMemory() {
                   focusRing,
                   'min-h-11 rounded-full border px-4 text-sm font-medium',
                   key === filter
-                    ? 'border-primary bg-primary/12 text-primary'
+                    ? 'bg-foreground text-background'
                     : 'text-muted-foreground',
                 )}
               >

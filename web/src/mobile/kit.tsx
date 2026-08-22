@@ -28,9 +28,7 @@ export function Group({
     <section className="mt-8 first:mt-0">
       {title && (
         <div className="mb-3 flex items-center justify-between gap-3 px-4">
-          <h2 className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
-            {title}
-          </h2>
+          <h2 className="text-base font-medium">{title}</h2>
           {action}
         </div>
       )}
@@ -55,17 +53,17 @@ export function Stat({
   tone?: 'lead' | 'alert';
 }) {
   return (
-    <StripItem className="bg-card min-w-32 rounded-2xl border px-4 py-3">
+    <StripItem className="bg-card min-w-32 rounded-xl border px-4 py-3">
+      <div className="text-muted-foreground text-xs">{label}</div>
       <div
         className={cn(
-          'text-2xl leading-tight font-semibold',
-          tone === 'lead' && 'text-primary',
+          'mt-1 text-2xl leading-tight font-normal',
+          tone === 'lead' && 'font-medium',
           tone === 'alert' && 'text-warning',
         )}
       >
         {value}
       </div>
-      <div className="text-muted-foreground mt-1 text-xs">{label}</div>
     </StripItem>
   );
 }
@@ -75,7 +73,7 @@ export function Pills({ items }: { items: Array<{ label: string; value: string; 
   return (
     <Strip snap="none">
       {items.map((item) => (
-        <StripItem key={item.label} className="bg-muted/60 rounded-xl px-3 py-2">
+        <StripItem key={item.label} className="bg-secondary rounded-full px-4 py-2">
           <div className="text-muted-foreground text-[11px] leading-none">{item.label}</div>
           <div className={cn('tabular mt-1 text-sm font-semibold', item.tone)}>{item.value}</div>
         </StripItem>
@@ -105,7 +103,7 @@ export function Disclosure({
         aria-expanded={open}
         className={cn(
           focusRing,
-          'text-primary flex min-h-11 w-full items-center gap-1 rounded-md text-sm font-medium',
+          'flex min-h-11 w-full items-center gap-1 rounded-md text-sm font-medium',
         )}
       >
         {open ? (openLabel ?? label) : label}
@@ -139,7 +137,7 @@ export function Fold({
       >
         <span className="flex-1 font-medium">{title}</span>
         {count != null && count > 0 && (
-          <span className="bg-muted tabular rounded-full px-2 py-1 text-xs font-semibold">
+          <span className="bg-secondary tabular rounded-full px-2 py-1 text-xs font-medium">
             {count}
           </span>
         )}
@@ -225,7 +223,7 @@ export function Skeletons({ rows = 3 }: { rows?: number }) {
   return (
     <div className="space-y-3 px-4" aria-busy="true">
       {Array.from({ length: rows }, (_, index) => (
-        <div key={index} className="bg-muted h-24 animate-pulse rounded-2xl" />
+        <div key={index} className="bg-muted h-24 animate-pulse rounded-xl" />
       ))}
     </div>
   );
@@ -235,14 +233,14 @@ export function Failed({ onRetry }: { onRetry?: () => void }) {
   const { t } = useI18n();
 
   return (
-    <div className="mx-4 rounded-2xl border border-destructive/30 bg-destructive/5 px-4 py-6 text-center">
-      <p className="text-[15px]">{t('state.error')}</p>
+    <div className="border-destructive/30 mx-4 rounded-xl border px-4 py-6 text-center">
+      <p className="text-destructive">{t('state.error')}</p>
       {onRetry && (
         <button
           onClick={onRetry}
           className={cn(
             focusRing,
-            'border-input mt-4 min-h-11 rounded-full border px-5 text-sm font-medium',
+            'border-input hover:bg-accent mt-4 min-h-11 rounded-full border px-5 text-sm font-medium',
           )}
         >
           {t('state.retry')}

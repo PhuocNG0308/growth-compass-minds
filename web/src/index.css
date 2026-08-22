@@ -8,64 +8,75 @@
 @custom-variant touch (@media (hover: none) and (pointer: coarse));
 
 :root {
-  --radius: 0.625rem;
+  color-scheme: light;
+  --radius: 0.75rem;
 
-  /* 60 — neutral canvas, near-zero chroma so long sessions stay easy on the eyes */
-  --background: #f2f4f2;
-  /* 30 — surfaces that carry content */
+  /* YouTube Studio works on a plain white canvas. Surfaces are told apart by a hairline,
+     never by a fill, so the content is the only thing carrying colour. */
+  --background: #ffffff;
   --card: #ffffff;
   --popover: #ffffff;
-  --secondary: #e8ece9;
-  --muted: #e8ece9;
-  --accent: #e4ebe5;
-  /* 10 — sage, reserved for the primary action and for data that matters.
-     Dark enough that a 20% tint of itself still clears AA for text sitting on it. */
-  --primary: #445c4b;
+  --secondary: #f2f2f2;
+  --muted: #f2f2f2;
+  --accent: #f2f2f2;
 
-  --foreground: #16201a;
-  --card-foreground: #16201a;
-  --popover-foreground: #16201a;
-  --secondary-foreground: #16201a;
-  --muted-foreground: #566459;
-  --accent-foreground: #3a5240;
+  /* the action colour is ink, not a hue: one black pill per view */
+  --primary: #0f0f0f;
+
+  --foreground: #0f0f0f;
+  --card-foreground: #0f0f0f;
+  --popover-foreground: #0f0f0f;
+  --secondary-foreground: #0f0f0f;
+  --muted-foreground: #606060;
+  --accent-foreground: #0f0f0f;
   --primary-foreground: #ffffff;
 
-  --destructive: #b03a3f;
+  --destructive: #c00000;
   --destructive-foreground: #ffffff;
-  --warning: #725019;
+  --warning: #7d5700;
   --warning-foreground: #ffffff;
+  /* a measure that beat its benchmark — the only place green is allowed */
+  --success: #12703a;
+  /* plotted data, which must not be mistaken for a control */
+  --chart: #065fd4;
+  /* the logo mark and unread dots. Never a background, never a button. */
+  --brand: #ff0000;
 
-  --border: #dbe1dc;
-  --input: #d3dbd5;
-  --ring: #445c4b;
+  --border: #e5e5e5;
+  --input: #d9d9d9;
+  --ring: #065fd4;
 }
 
 .dark {
-  --background: #121613;
-  --card: #1a1f1c;
-  --popover: #1a1f1c;
-  --secondary: #232a25;
-  --muted: #232a25;
-  --accent: #26302a;
+  color-scheme: dark;
+  --background: #0f0f0f;
+  --card: #0f0f0f;
+  --popover: #212121;
+  --secondary: #272727;
+  --muted: #272727;
+  --accent: #272727;
 
-  --primary: #a3c4a8;
+  --primary: #f1f1f1;
 
-  --foreground: #e6ebe7;
-  --card-foreground: #e6ebe7;
-  --popover-foreground: #e6ebe7;
-  --secondary-foreground: #e6ebe7;
-  --muted-foreground: #9aa89e;
-  --accent-foreground: #c2d8c6;
-  --primary-foreground: #14231a;
+  --foreground: #f1f1f1;
+  --card-foreground: #f1f1f1;
+  --popover-foreground: #f1f1f1;
+  --secondary-foreground: #f1f1f1;
+  --muted-foreground: #aaaaaa;
+  --accent-foreground: #f1f1f1;
+  --primary-foreground: #0f0f0f;
 
-  --destructive: #ef8a8a;
-  --destructive-foreground: #2a0e0e;
-  --warning: #dfb367;
-  --warning-foreground: #241a02;
+  --destructive: #f28b82;
+  --destructive-foreground: #0f0f0f;
+  --warning: #fdd663;
+  --warning-foreground: #0f0f0f;
+  --success: #81c995;
+  --chart: #3ea6ff;
+  --brand: #ff0000;
 
-  --border: #2b332e;
-  --input: #333d36;
-  --ring: #a3c4a8;
+  --border: #303030;
+  --input: #3f3f3f;
+  --ring: #3ea6ff;
 }
 
 @theme inline {
@@ -90,14 +101,20 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-success: var(--success);
+  --color-chart: var(--chart);
+  --color-brand: var(--brand);
 
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  /* One card radius, and everything from lg upward lands on it. A screen with three
+     different corner sizes reads as three different products. */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 12px;
+  --radius-2xl: 12px;
 
-  --font-sans: 'Geist Sans', Geist, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --font-mono: 'Geist Mono', ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, monospace;
+  --font-sans: Roboto, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'Roboto Mono', ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, monospace;
 }
 
 @layer base {
@@ -142,8 +159,8 @@
     background-color: var(--background);
     color: var(--foreground);
     font-family: var(--font-sans);
-    font-size: 1.0625rem;
-    line-height: 1.6;
+    font-size: 0.875rem;
+    line-height: 1.5;
     -webkit-font-smoothing: antialiased;
   }
 

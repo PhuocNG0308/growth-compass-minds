@@ -9,7 +9,7 @@ export function LocaleToggle({ className }: { className?: string }) {
   const { locale, setLocale } = useI18n();
 
   return (
-    <div className={cn('flex items-center rounded-lg border p-1', className)}>
+    <div className={cn('bg-secondary flex items-center rounded-full p-1', className)}>
       {LOCALES.map(([code, label]) => (
         <button
           key={code}
@@ -17,9 +17,9 @@ export function LocaleToggle({ className }: { className?: string }) {
           aria-pressed={code === locale}
           className={cn(
             focusRing,
-            'rounded-md px-2 py-1 text-xs font-semibold transition-colors @md:px-3',
+            'rounded-full px-3 py-1 text-xs font-medium transition-colors',
             code === locale
-              ? 'bg-primary text-primary-foreground'
+              ? 'bg-background text-foreground'
               : 'text-muted-foreground hover:text-foreground',
           )}
         >

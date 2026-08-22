@@ -44,8 +44,8 @@ export function RetentionChart({
           </g>
         ))}
 
-        <path d={`${line} L${W} ${TOP + PLOT} L${LEFT} ${TOP + PLOT} Z`} className="fill-primary opacity-18" />
-        <path d={line} className="stroke-primary fill-none" strokeWidth={3} strokeLinejoin="round" />
+        <path d={`${line} L${W} ${TOP + PLOT} L${LEFT} ${TOP + PLOT} Z`} className="fill-chart opacity-18" />
+        <path d={line} className="stroke-chart fill-none" strokeWidth={3} strokeLinejoin="round" />
 
         {retention.steepestDropOffs.map((drop) => (
           <g key={drop.ratio}>

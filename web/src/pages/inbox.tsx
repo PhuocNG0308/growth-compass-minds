@@ -25,7 +25,7 @@ export function Inbox({ me }: { me: Me }) {
   return (
     <>
       {me.counts.overdue > 0 && (
-        <Alert className="border-warning/30 bg-warning/10 text-warning mb-5 xl:hidden">
+        <Alert className="border-warning/40 text-warning mb-6 xl:hidden">
           <TriangleAlert />
           <AlertTitle className="text-[15px]">{plural('alert.overdue', me.counts.overdue)}</AlertTitle>
         </Alert>
@@ -34,7 +34,7 @@ export function Inbox({ me }: { me: Me }) {
       <SectionTitle
         action={
           waiting.length > 0 && (
-            <span className="bg-primary text-primary-foreground tabular rounded-full px-3 py-1 text-sm font-semibold">
+            <span className="bg-secondary tabular rounded-full px-3 py-1 text-sm font-medium">
               {waiting.length}
             </span>
           )

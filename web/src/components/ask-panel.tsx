@@ -73,7 +73,7 @@ export function AskPanel({
               key={i}
               className={cn(
                 'max-w-[85%] rounded-2xl px-4 py-3 text-[15px] leading-relaxed whitespace-pre-line',
-                turn.role === 'creator' ? 'bg-primary text-primary-foreground ml-auto' : 'bg-muted',
+                turn.role === 'creator' ? 'bg-secondary ml-auto' : 'bg-muted',
               )}
             >
               {turn.text}
@@ -81,7 +81,7 @@ export function AskPanel({
           ))}
           {busy && (
             <>
-              <div className="bg-primary text-primary-foreground ml-auto max-w-[85%] rounded-2xl px-4 py-3 text-[15px]">
+              <div className="bg-secondary ml-auto max-w-[85%] rounded-2xl px-4 py-3 text-[15px]">
                 {pending}
               </div>
               <div className="bg-muted text-muted-foreground max-w-[85%] rounded-2xl px-4 py-3 text-[15px]">
@@ -212,14 +212,14 @@ function Composer({
           {tagged.map((item) => (
             <span
               key={`${item.kind}:${item.id}`}
-              className="bg-primary/15 text-primary flex items-center gap-2 rounded-full py-1 pr-2 pl-3 text-xs font-medium"
+              className="bg-secondary flex items-center gap-2 rounded-full py-1 pr-2 pl-3 text-xs font-medium"
             >
               <AtSign className="size-3" />
               <span className="max-w-40 truncate">{item.label}</span>
               <button
                 onClick={() => setTagged(tagged.filter((other) => other !== item))}
                 aria-label={t('ask.untag')}
-                className="hover:bg-primary/20 rounded-full p-1"
+                className="hover:bg-input rounded-full p-1"
               >
                 <X className="size-3" />
               </button>

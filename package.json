@@ -11,6 +11,7 @@
     "migrate": "tsx src/db/migrate.ts",
     "db:check": "tsx dev/dbcheck.ts",
     "seed:demo": "tsx dev/seed-demo.ts",
+    "flatten:fe": "tsx dev/flatten-fe.ts",
     "mind": "tsx dev/mind.ts",
     "typecheck": "tsc --noEmit"
   },

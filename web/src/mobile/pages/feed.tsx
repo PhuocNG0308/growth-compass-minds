@@ -1,215 +1,256 @@
-import { useState } from 'react';
-import { MessageCircle, Sparkles } from 'lucide-react';
-import { Sparkline, Thumb } from '@/components/thumb';
-import { SegmentBadge } from '@/pages/feed';
-import { Empty, Failed, Pills, Sheet, Skeletons, Strip, StripItem } from '@/mobile/kit';
+import { useMemo, useState } from 'react';
+import {
+  Archive,
+  ArchiveRestore,
+  Check,
+  ListFilter,
+  MessageSquare,
+  MoreVertical,
+  Search,
+  Sparkles,
+} from 'lucide-react';
+import { Thumb } from '@/components/thumb';
+import { Empty, Failed, Sheet, Skeletons, Strip, StripItem } from '@/mobile/kit';
 import { api } from '@/lib/api';
+import { useArchive } from '@/lib/archive';
+import { FILTERS, useFeedFilters, type FilterKey } from '@/lib/feed-filters';
 import { useFormat } from '@/lib/format';
 import { useI18n } from '@/lib/i18n';
 import { useAsync } from '@/lib/use-async';
 import { cn, focusRing } from '@/lib/utils';
-import type { FeedPost, PostComment } from '@/lib/types';
+import type { FeedPost } from '@/lib/types';
 
-const RANGES = [
-  ['all', null],
-  ['month', 30],
-  ['quarter', 90],
-] as const;
+type Tab = 'active' | 'hidden' | 'all';
 
+const TABS: Array<[Tab, string]> = [
+  ['active', 'feed.tabActive'],
+  ['hidden', 'feed.tabHidden'],
+  ['all', 'feed.tabAll'],
+];
+
+/**
+ * The same catalogue as the desktop table, in the shape a thumb can walk: one row per video,
+ * the three numbers that decide whether to open it, and everything else behind a sheet.
+ */
 export function MobileFeed() {
   const { t } = useI18n();
-  const [range, setRange] = useState<(typeof RANGES)[number][0]>('all');
+  const [tab, setTab] = useState<Tab>('active');
+  const [query, setQuery] = useState('');
+  const [filters, setFilters] = useState<Set<FilterKey>>(new Set());
+  const [sheet, setSheet] = useState(false);
   const [round, setRound] = useState(0);
+  const [chosen, setChosen] = useState<FeedPost | null>(null);
   const { data, loading, error } = useAsync(() => api.feed(), [round]);
+  const archive = useArchive();
+  const { matches } = useFeedFilters(data, round);
+
+  const posts = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return (data ?? []).filter((post) => {
+      const hidden = archive.ids.includes(post.ytVideoId);
+      if (tab === 'active' && hidden) return false;
+      if (tab === 'hidden' && !hidden) return false;
+      if (needle && !post.title.toLowerCase().includes(needle)) return false;
+      return matches(post, filters);
+    });
+  }, [data, tab, query, filters, archive.ids, matches]);
 
   if (loading) return <Skeletons />;
   if (error) return <Failed onRetry={() => setRound((n) => n + 1)} />;
   if (!data?.length) return <Empty>{t('empty.videos')}</Empty>;
 
-  const cutoff = RANGES.find(([key]) => key === range)![1];
-  const posts = cutoff
-    ? data.filter((post) => Date.now() - new Date(post.publishedAt).getTime() < cutoff * 86_400_000)
-    : data;
-
-  const benchmark = {
-    ctrPct: median(data.map((post) => post.ctrPct)),
-    avgViewPct: median(data.map((post) => post.avgViewPct)),
-  };
-
   return (
     <>
+      <div className="flex items-center gap-2 px-4 pb-3">
+        <div className="relative min-w-0 flex-1">
+          <Search className="text-muted-foreground pointer-events-none absolute top-3 left-4 size-4" />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={t('feed.search')}
+            aria-label={t('feed.search')}
+            className={cn(focusRing, 'h-11 w-full rounded-full border pr-4 pl-11 text-sm')}
+          />
+        </div>
+
+        <button
+          onClick={() => setSheet(true)}
+          aria-label={t('feed.filter')}
+          className={cn(
+            focusRing,
+            'relative grid size-11 shrink-0 place-items-center rounded-full border',
+            filters.size > 0 && 'bg-foreground text-background border-transparent',
+          )}
+        >
+          <ListFilter className="size-5" />
+        </button>
+      </div>
+
       <Strip snap="none" className="pb-3">
-        {RANGES.map(([key]) => (
+        {TABS.map(([key, label]) => (
           <StripItem key={key}>
             <button
-              onClick={() => setRange(key)}
-              aria-pressed={key === range}
+              onClick={() => setTab(key)}
+              aria-pressed={tab === key}
               className={cn(
                 focusRing,
                 'min-h-11 rounded-full border px-4 text-sm font-medium',
-                key === range
-                  ? 'border-primary bg-primary/12 text-primary'
-                  : 'text-muted-foreground',
+                tab === key ? 'bg-foreground text-background' : 'text-muted-foreground',
               )}
             >
-              {t(`range.${key}`)}
+              {t(label)}
             </button>
           </StripItem>
         ))}
       </Strip>
 
-      {posts.length ? (
-        <div className="space-y-3 px-4">
+      {posts.length === 0 ? (
+        <Empty>
+          {t(tab === 'hidden' && !query && filters.size === 0 ? 'empty.hidden' : 'empty.filtered')}
+        </Empty>
+      ) : (
+        <div className="divide-y border-y">
           {posts.map((post) => (
-            <Card key={post.ytVideoId} post={post} benchmark={benchmark} />
+            <Row key={post.ytVideoId} post={post} onMenu={() => setChosen(post)} />
           ))}
         </div>
-      ) : (
-        <Empty>{t('empty.range')}</Empty>
       )}
+
+      <Actions post={chosen} archive={archive} onClose={() => setChosen(null)} />
+
+      <Sheet open={sheet} onOpenChange={setSheet} title={t('feed.filter')}>
+        <div className="px-3 pt-2 pb-6">
+          {FILTERS.map((key) => {
+            const on = filters.has(key);
+            return (
+              <button
+                key={key}
+                onClick={() =>
+                  setFilters((current) => {
+                    const next = new Set(current);
+                    if (!next.delete(key)) next.add(key);
+                    return next;
+                  })
+                }
+                aria-pressed={on}
+                className={cn(
+                  focusRing,
+                  'flex min-h-14 w-full items-center gap-3 rounded-xl px-4 text-left text-sm font-medium',
+                )}
+              >
+                <span
+                  className={cn(
+                    'grid size-5 shrink-0 place-items-center rounded-sm border',
+                    on && 'bg-foreground text-background border-transparent',
+                  )}
+                >
+                  {on && <Check className="size-3" />}
+                </span>
+                {t(`filter.${key}`)}
+              </button>
+            );
+          })}
+
+          {filters.size > 0 && (
+            <button
+              onClick={() => setFilters(new Set())}
+              className={cn(
+                focusRing,
+                'text-muted-foreground mt-2 flex min-h-12 w-full items-center justify-center rounded-full border text-sm font-medium',
+              )}
+            >
+              {t('feed.clearSearch')}
+            </button>
+          )}
+        </div>
+      </Sheet>
     </>
   );
 }
 
-/**
- * One tappable object. The desktop card carries a two-button row, a comment preview and two
- * benchmark badges; on a phone the whole card is the target, the numbers become one
- * flickable line, and the conversation waits behind a sheet.
- */
-function Card({
-  post,
-  benchmark,
-}: {
-  post: FeedPost;
-  benchmark: { ctrPct: number | null; avgViewPct: number | null };
-}) {
+function Row({ post, onMenu }: { post: FeedPost; onMenu: () => void }) {
   const { t } = useI18n();
   const f = useFormat();
-  const [comments, setComments] = useState(false);
-
-  const go = (ask = false) => {
-    location.hash = `#/post/${encodeURIComponent(post.ytVideoId)}${ask ? '/ask' : ''}`;
-  };
 
   return (
-    <article className="bg-card overflow-hidden rounded-2xl border">
-      <button
-        onClick={() => go()}
-        className={cn(focusRing, 'block w-full text-left')}
-        aria-label={post.title}
+    <div className="flex items-center gap-3 px-4 py-3">
+      <a
+        href={`#/post/${encodeURIComponent(post.ytVideoId)}`}
+        className={cn(focusRing, 'min-w-0 flex-1 rounded-md')}
       >
-        <Thumb
-          url={post.thumbnailUrl}
-          title={post.title}
-          duration={post.durationS == null ? undefined : f.clock(post.durationS)}
-          className="rounded-none"
-        />
-        <div className="px-4 pt-3">
-          <h3 className="line-clamp-2 leading-snug font-medium">{post.title}</h3>
-          <p className="text-muted-foreground mt-1 text-xs">{f.since(post.publishedAt)}</p>
+        <div className="flex items-center gap-3">
+          <Thumb
+            url={post.thumbnailUrl}
+            title={post.title}
+            duration={post.durationS == null ? undefined : f.clock(post.durationS)}
+            className="w-24 shrink-0"
+          />
+          <div className="min-w-0 flex-1">
+            <p className="line-clamp-2 text-[13px] leading-snug font-medium">{post.title}</p>
+            <p className="text-muted-foreground mt-1 truncate text-[11px]">
+              <span className="tabular">{f.int(post.views)}</span> {t('metric.views')}
+              {' · '}
+              <span className="tabular">{f.pct(post.ctrPct, 1)}</span> {t('metric.ctrPct')}
+              {' · '}
+              {f.since(post.publishedAt)}
+            </p>
+          </div>
         </div>
+      </a>
+
+      <button
+        onClick={onMenu}
+        aria-label={t('feed.actions', { title: post.title })}
+        className={cn(focusRing, 'text-muted-foreground grid size-11 shrink-0 place-items-center rounded-full')}
+      >
+        <MoreVertical className="size-5" />
       </button>
+    </div>
+  );
+}
 
-      <div className="mt-3">
-        <Pills
-          items={[
-            { label: t('metric.views'), value: f.int(post.views) },
-            {
-              label: t('metric.ctrPct'),
-              value: f.pct(post.ctrPct, 1),
-              tone: tone(post.ctrPct, benchmark.ctrPct),
-            },
-            {
-              label: t('metric.avgViewPct'),
-              value: f.pct(post.avgViewPct),
-              tone: tone(post.avgViewPct, benchmark.avgViewPct),
-            },
-          ]}
-        />
-      </div>
+function Actions({
+  post,
+  archive,
+  onClose,
+}: {
+  post: FeedPost | null;
+  archive: ReturnType<typeof useArchive>;
+  onClose: () => void;
+}) {
+  const { t } = useI18n();
+  if (!post) return null;
 
-      {post.trajectory.length > 2 && (
-        <div className="mt-4 flex items-center gap-3 px-4">
-          {/* a bare curve between numbers and buttons reads as decoration, so it is named.
-              It is deliberately *not* labelled "still climbing": snapshots are sampled at
-              6h, 24h … 1008h, so a window over the last few points spans most of the
-              video's life and any slope read off it would be wrong. */}
-          <span className="text-muted-foreground shrink-0 text-xs">{t('feed.curve')}</span>
-          <span className="min-w-0 flex-1">
-            <Sparkline points={post.trajectory} />
-          </span>
-        </div>
-      )}
+  const href = `#/post/${encodeURIComponent(post.ytVideoId)}`;
+  const hidden = archive.has(post.ytVideoId);
+  const row = cn(
+    focusRing,
+    'hover:bg-secondary flex min-h-12 w-full items-center gap-3 rounded-xl px-4 text-sm font-medium',
+  );
 
-      <div className="mt-3 grid grid-cols-2 border-t">
-        <button
-          onClick={() => setComments(true)}
-          disabled={post.commentCount === 0}
-          className={cn(
-            focusRing,
-            'text-muted-foreground flex min-h-12 items-center justify-center gap-2 text-sm font-medium disabled:opacity-40',
-          )}
-        >
-          <MessageCircle className="size-4" />
-          {post.commentCount}
-        </button>
-        <button
-          onClick={() => go(true)}
-          className={cn(
-            focusRing,
-            'text-primary flex min-h-12 items-center justify-center gap-2 border-l text-sm font-medium',
-          )}
-        >
+  return (
+    <Sheet open onOpenChange={(open) => !open && onClose()} title={post.title}>
+      <div className="space-y-1 px-3 pt-2 pb-6">
+        <a href={`${href}/ask`} onClick={onClose} className={row}>
           <Sparkles className="size-4" />
           {t('feed.ask')}
-        </button>
-      </div>
-
-      <Sheet open={comments} onOpenChange={setComments} title={post.title}>
-        <div className="divide-y">
-          {post.topComments.map((comment) => (
-            <CommentRow key={comment.ytCommentId} comment={comment} />
-          ))}
-        </div>
+        </a>
+        <a href={href} onClick={onClose} className={row}>
+          <MessageSquare className="size-4" />
+          {t('feed.comments')}
+          <span className="tabular text-muted-foreground ml-auto">{post.commentCount}</span>
+        </a>
         <button
-          onClick={() => go()}
-          className={cn(focusRing, 'text-primary min-h-12 w-full px-4 text-sm font-medium')}
+          onClick={() => {
+            archive.toggle(post.ytVideoId);
+            onClose();
+          }}
+          className={row}
         >
-          {t('feed.moreComments', { n: Math.max(post.commentCount - post.topComments.length, 0) })}
+          {hidden ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />}
+          {t(hidden ? 'feed.unhide' : 'feed.hide')}
         </button>
-      </Sheet>
-    </article>
-  );
-}
-
-function CommentRow({ comment }: { comment: PostComment }) {
-  const f = useFormat();
-
-  return (
-    <a
-      href={`#/viewer/${encodeURIComponent(comment.ytAuthorId)}`}
-      className={cn(focusRing, 'block px-4 py-4')}
-    >
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-sm font-semibold">{comment.displayName}</span>
-        <SegmentBadge segment={comment.segment} />
-        <span className="text-muted-foreground ml-auto text-xs">{f.since(comment.publishedAt)}</span>
       </div>
-      <p className="mt-1 text-[15px] leading-relaxed">{comment.text}</p>
-    </a>
+    </Sheet>
   );
-}
-
-const tone = (value: number | null, benchmark: number | null) =>
-  value == null || benchmark == null
-    ? undefined
-    : value >= benchmark
-      ? 'text-primary'
-      : 'text-destructive';
-
-function median(values: Array<number | null>): number | null {
-  const sorted = values.filter((value): value is number => value != null).sort((a, b) => a - b);
-  if (sorted.length === 0) return null;
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[middle]! : (sorted[middle - 1]! + sorted[middle]!) / 2;
 }

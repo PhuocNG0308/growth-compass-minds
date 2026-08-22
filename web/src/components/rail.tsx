@@ -24,7 +24,7 @@ export function Rail({ me }: { me: Me }) {
           href="#/inbox"
           className={cn(
             focusRing,
-            'bg-warning/10 text-warning hover:bg-warning/15 flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-medium',
+            'text-warning border-warning/40 hover:bg-accent flex items-center gap-3 rounded-xl border px-4 py-3 text-sm font-medium',
           )}
         >
           <TriangleAlert className="size-4 shrink-0" />
@@ -38,7 +38,7 @@ export function Rail({ me }: { me: Me }) {
           <Row label={t('stat.videos')} value={me.counts.videos} />
           <Row label={t('stat.running')} value={me.counts.running} />
           <Row label={t('stat.settled')} value={me.counts.settled} />
-          <Row label={t('stat.rules')} value={me.counts.tenets} accent />
+          <Row label={t('stat.rules')} value={me.counts.tenets} />
         </dl>
         <p className="text-muted-foreground mt-3 text-xs">
           {me.reachThrough ? t('ctr.through', { date: f.longDate(me.reachThrough) }) : t('ctr.pending')}
@@ -105,11 +105,11 @@ export function Rail({ me }: { me: Me }) {
   );
 }
 
-function Row({ label, value, accent }: { label: string; value: number; accent?: boolean }) {
+function Row({ label, value }: { label: string; value: number }) {
   return (
     <div className="flex items-baseline justify-between py-3">
       <dt className="text-muted-foreground text-sm">{label}</dt>
-      <dd className={cn('tabular text-lg font-medium', accent && 'text-primary')}>{value}</dd>
+      <dd className="tabular font-medium">{value}</dd>
     </div>
   );
 }

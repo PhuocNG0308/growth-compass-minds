@@ -22,23 +22,22 @@ export function StatGrid({ stats }: { stats: Stat[] }) {
         <div
           key={stat.label}
           className={cn(
-            'px-5 py-4',
-            stat.lead ? 'bg-primary/8' : 'bg-card',
+            'bg-card px-5 py-4',
             i === stats.length - 1 && stats.length % 2 === 1 && 'col-span-2 sm:col-span-1',
           )}
         >
+          <div className="text-muted-foreground text-xs">{stat.label}</div>
           <div
             className={cn(
               // proportional figures: tabular-nums is for columns that align, and equal-width
               // digits make a large standalone number read loose
-              'text-3xl leading-tight font-medium tracking-tight',
-              stat.lead && 'text-primary',
+              'mt-1 text-2xl leading-tight font-normal tracking-tight',
+              stat.lead && 'font-medium',
               stat.alert && 'text-warning',
             )}
           >
             {stat.value}
           </div>
-          <div className="mt-1 text-xs text-muted-foreground">{stat.label}</div>
         </div>
       ))}
     </div>

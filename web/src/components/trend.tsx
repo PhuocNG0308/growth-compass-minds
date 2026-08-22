@@ -179,14 +179,14 @@ export function Trend({
                   <path
                     key={path}
                     d={`${path} L${x(points.length - 1)} ${H} L0 ${H} Z`}
-                    className="fill-primary opacity-12"
+                    className="fill-chart opacity-12"
                   />
                 ))}
                 {segments.map((path) => (
                   <path
                     key={`line-${path}`}
                     d={path}
-                    className="stroke-primary fill-none"
+                    className="stroke-chart fill-none"
                     strokeWidth={2}
                     strokeLinejoin="round"
                     strokeLinecap="round"
@@ -214,7 +214,7 @@ export function Trend({
                     <span
                       key={point.label}
                       className={cn(
-                        'bg-primary pointer-events-none absolute size-2 -translate-x-1/2 -translate-y-1/2 rounded-full',
+                        'bg-chart pointer-events-none absolute size-2 -translate-x-1/2 -translate-y-1/2 rounded-full',
                         index === cursor && 'ring-card size-3 ring-2',
                       )}
                       style={{

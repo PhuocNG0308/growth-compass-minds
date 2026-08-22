@@ -67,7 +67,7 @@ export function RunningExperiment({ experiment }: { experiment: OpenExperiment }
 }
 
 const VERDICT_STYLE: Record<Verdict, string> = {
-  confirmed: 'bg-primary/20 text-primary border-primary/35',
+  confirmed: 'bg-success/12 text-success border-success/35',
   refuted: 'bg-destructive/20 text-destructive border-destructive/35',
   inconclusive: 'bg-muted text-muted-foreground',
 };
@@ -126,7 +126,7 @@ function Gauge({ metric, predicted, actual }: { metric: string; predicted: numbe
           <i
             className={cn(
               'ring-card absolute size-4 -translate-x-1/2 rounded-full ring-2',
-              over ? 'bg-primary' : 'bg-destructive',
+              over ? 'bg-success' : 'bg-destructive',
             )}
             style={{ left: at(actual) }}
           />

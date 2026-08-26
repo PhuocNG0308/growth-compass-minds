@@ -1,7 +1,9 @@
 import { useState } from 'react';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Sparkles } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { AskPanel } from '@/components/ask-panel';
+import { SidePanel } from '@/components/side-panel';
+import { Button } from '@/components/ui/button';
 import { Empty, Failed, List, Loading, SectionTitle } from '@/components/shell';
 import { StatGrid } from '@/components/stats';
 import { Thumb } from '@/components/thumb';
@@ -18,6 +20,7 @@ export function ViewerProfile({ ytAuthorId }: { ytAuthorId: string }) {
   const { t, plural } = useI18n();
   const f = useFormat();
   const [round, setRound] = useState(0);
+  const [ask, setAsk] = useState(false);
   const { data, loading, error } = useAsync(() => api.viewer(ytAuthorId), [ytAuthorId, round]);
 
   if (loading) return <Loading rows={3} />;
@@ -36,7 +39,7 @@ export function ViewerProfile({ ytAuthorId }: { ytAuthorId: string }) {
       </button>
 
       <div className="mb-5 flex items-center gap-4">
-        <span className="bg-primary/20 text-primary grid size-14 shrink-0 place-items-center rounded-full text-xl font-semibold">
+        <span className="bg-muted text-muted-foreground grid size-14 shrink-0 place-items-center rounded-full text-xl font-semibold">
           {viewer.displayName.trim().charAt(0).toUpperCase()}
         </span>
         <div className="min-w-0">
@@ -59,14 +62,23 @@ export function ViewerProfile({ ytAuthorId }: { ytAuthorId: string }) {
         ]}
       />
 
-      <AskPanel
-        subject={{
-          ask: (question, mentions) => api.askViewer(ytAuthorId, question, mentions),
-          chat: () => api.viewerChat(ytAuthorId),
-        }}
-        suggestions={SUGGESTIONS}
-        title="ask.viewerTitle"
-      />
+      <Button variant="outline" className="mt-4" onClick={() => setAsk(true)}>
+        <Sparkles />
+        {t('ask.viewerTitle')}
+      </Button>
+
+      <SidePanel open={ask} onOpenChange={setAsk} title={t('ask.viewerTitle')}>
+        <AskPanel
+          fill
+          subject={{
+            ask: (question, mentions) => api.askViewer(ytAuthorId, question, mentions),
+            chat: () => api.viewerChat(ytAuthorId),
+          }}
+          suggestions={SUGGESTIONS}
+          title="ask.viewerTitle"
+          autoFocus={ask}
+        />
+      </SidePanel>
 
       <ThreadList ytAuthorId={ytAuthorId} />
 

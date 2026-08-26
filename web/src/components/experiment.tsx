@@ -101,16 +101,25 @@ export function SettledExperimentCard({ experiment }: { experiment: SettledExper
           />
         ))}
       </div>
+
+      <p className="text-muted-foreground mt-3 text-xs">{t('exp.gaugeKey', { n: MISS * 100 })}</p>
     </article>
   );
 }
 
+// the half-track: a prediction this far out sits at the end of it, and further out stays there
+const MISS = 0.6;
+
+/**
+ * Per-row scaling put the committed number in a different place on every row, so a 2% miss
+ * and a 40% miss looked alike. The scale is the miss itself: centre is always the prediction.
+ */
 function Gauge({ metric, predicted, actual }: { metric: string; predicted: number; actual: number | null }) {
+  const { t } = useI18n();
   const f = useFormat();
-  const scale = Math.max(predicted, actual ?? 0) * 1.3 || 1;
-  const at = (value: number) => `${Math.min(Math.max((value / scale) * 100, 0), 100).toFixed(1)}%`;
-  const over = actual != null && actual >= predicted;
-  const delta = actual == null || !predicted ? null : ((actual - predicted) / predicted) * 100;
+  const off = actual == null || !predicted ? null : (actual - predicted) / predicted;
+  const over = off != null && off >= 0;
+  const at = off == null ? 50 : 50 + (Math.max(Math.min(off, MISS), -MISS) / MISS) * 50;
 
   return (
     <div className="grid items-center gap-x-4 gap-y-2 sm:grid-cols-[8rem_1fr_auto]">
@@ -119,16 +128,17 @@ function Gauge({ metric, predicted, actual }: { metric: string; predicted: numbe
       <span className="relative flex h-4 items-center">
         <span className="bg-muted h-2 w-full rounded-full" />
         <i
-          className="bg-muted-foreground absolute h-4 w-1 -translate-x-1/2 rounded-full"
-          style={{ left: at(predicted) }}
+          aria-hidden
+          className="bg-muted-foreground absolute left-1/2 h-4 w-1 -translate-x-1/2 rounded-full"
         />
-        {actual != null && (
+        {off != null && (
           <i
+            title={t('exp.gaugeOff', { n: f.dec(Math.abs(off) * 100, 0) })}
             className={cn(
               'ring-card absolute size-4 -translate-x-1/2 rounded-full ring-2',
               over ? 'bg-success' : 'bg-destructive',
             )}
-            style={{ left: at(actual) }}
+            style={{ left: `${at.toFixed(1)}%` }}
           />
         )}
       </span>
@@ -137,10 +147,10 @@ function Gauge({ metric, predicted, actual }: { metric: string; predicted: numbe
         <b className="font-medium text-foreground">{f.metricValue(metric, actual)}</b>
         {' / '}
         {f.metricValue(metric, predicted)}
-        {delta != null && (
+        {off != null && (
           <span className={cn('ml-2', over ? 'text-primary' : 'text-destructive')}>
-            {delta >= 0 ? '+' : '−'}
-            {f.dec(Math.abs(delta), 0)}%
+            {over ? '+' : '−'}
+            {f.dec(Math.abs(off) * 100, 0)}%
           </span>
         )}
       </span>

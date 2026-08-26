@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Bot, Search, User } from 'lucide-react';
+import { ArrowRight, Bot, Search, User } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { Empty, Failed, List, Loading, SectionTitle } from '@/components/shell';
 import { api } from '@/lib/api';
 import { useFormat } from '@/lib/format';
@@ -57,7 +58,18 @@ export function Chats() {
           ))}
         </List>
       ) : (
-        <Empty>{t('empty.chats')}</Empty>
+        <Empty
+          action={
+            <Button variant="outline" size="sm" asChild>
+              <a href="#/">
+                {t('empty.chatsGo')}
+                <ArrowRight />
+              </a>
+            </Button>
+          }
+        >
+          {t('empty.chats')}
+        </Empty>
       )}
     </>
   );

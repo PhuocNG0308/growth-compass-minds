@@ -32,6 +32,37 @@ export async function conversation(alias: string): Promise<{ client: Client; ali
   return { client, alias };
 }
 
+const BALANCE_TTL_MS = 60_000;
+let balance: { at: number; cognition: number | null } = { at: 0, cognition: null };
+
+let refreshing: Promise<void> | null = null;
+
+/**
+ * Last known cognition balance. Never awaits the network: /api/me is on the critical path of
+ * every page load, and the first call after a restart would otherwise block on Minds. A stale
+ * or null answer only delays the warning by one request.
+ */
+export function cognition(): number | null {
+  if (!mindEnabled) return null;
+  if (Date.now() - balance.at > BALANCE_TTL_MS) void refreshCognition();
+  return balance.cognition;
+}
+
+export function refreshCognition(): Promise<void> {
+  refreshing ??= mindSession()
+    .then(({ client, mindId }) => client.getCognitionBalance(mindId))
+    .then((row) => {
+      balance = { at: Date.now(), cognition: typeof row.cognition === 'number' ? row.cognition : null };
+    })
+    .catch(() => {
+      balance = { at: Date.now(), cognition: balance.cognition };
+    })
+    .finally(() => {
+      refreshing = null;
+    });
+  return refreshing;
+}
+
 export async function notifyMind(messageText: string): Promise<void> {
   if (!mindEnabled) {
     console.warn('[mind] MINDS_BUILDER_API_KEY unset, skipping:', messageText.slice(0, 120));

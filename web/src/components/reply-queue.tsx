@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { MessageSquare, Send, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -27,6 +27,7 @@ export function ReplyQueue({ segment }: { segment?: Segment | null }) {
   const [round, setRound] = useState(0);
   const [shown, setShown] = useState(PAGE);
   const [answered, setAnswered] = useState<string[]>([]);
+  const cards = useRef<Array<HTMLDivElement | null>>([]);
   const { data, loading, error } = useAsync(() => api.replies(), [round]);
 
   if (loading) return <Loading rows={3} />;
@@ -38,18 +39,29 @@ export function ReplyQueue({ segment }: { segment?: Segment | null }) {
 
   if (!queue.length) return <Empty>{t('empty.queue')}</Empty>;
 
+  const rows = queue.slice(0, shown);
+
   return (
     <>
-      {!data!.enabled && (
+      {!data!.enabled ? (
         <p className="text-muted-foreground border-b py-3 text-sm">{t('reply.disabled')}</p>
+      ) : (
+        rows.length > 1 && <p className="text-muted-foreground mb-3 text-xs">{t('reply.keys')}</p>
       )}
 
       <List>
-        {queue.slice(0, shown).map((target) => (
+        {rows.map((target, index) => (
           <ReplyRow
             key={target.ytCommentId}
             target={target}
             canSend={data!.enabled}
+            first={index === 0}
+            bind={(node) => {
+              cards.current[index] = node;
+            }}
+            onMove={(delta) =>
+              cards.current[Math.min(Math.max(index + delta, 0), rows.length - 1)]?.focus()
+            }
             onSent={() => setAnswered((ids) => [...ids, target.ytCommentId])}
           />
         ))}
@@ -73,10 +85,16 @@ export function ReplyQueue({ segment }: { segment?: Segment | null }) {
 function ReplyRow({
   target,
   canSend,
+  first,
+  bind,
+  onMove,
   onSent,
 }: {
   target: ReplyTarget;
   canSend: boolean;
+  first: boolean;
+  bind: (node: HTMLDivElement | null) => void;
+  onMove: (delta: number) => void;
   onSent: () => void;
 }) {
   const { t, plural } = useI18n();
@@ -118,8 +136,28 @@ function ReplyRow({
     }
   }
 
+  const SHORTCUTS: Record<string, () => void> = {
+    j: () => onMove(1),
+    k: () => onMove(-1),
+    e: () => canSend && setOpen(true),
+  };
+
   return (
-    <div className="flex gap-4 py-4">
+    <div
+      ref={bind}
+      // one stop in the tab order for the whole queue; j/k walk it from there
+      tabIndex={first ? 0 : -1}
+      aria-keyshortcuts="j k e"
+      onKeyDown={(event) => {
+        // the moment focus is in the composer, every key belongs to the reply being written
+        if (event.target !== event.currentTarget) return;
+        const act = SHORTCUTS[event.key.toLowerCase()];
+        if (!act) return;
+        event.preventDefault();
+        act();
+      }}
+      className={cn(focusRing, 'flex gap-4 py-4')}
+    >
       <a
         href={`#/post/${encodeURIComponent(target.ytVideoId)}`}
         className={cn(focusRing, 'hidden w-24 shrink-0 self-start @md:block')}

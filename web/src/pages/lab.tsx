@@ -1,46 +1,34 @@
 import { useState } from 'react';
+import { ArrowRight } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { RunningExperiment, SettledExperimentCard } from '@/components/experiment';
 import { Empty, Failed, List, Loading, SectionTitle } from '@/components/shell';
-import { Trend, type TrendPoint } from '@/components/trend';
 import { StatGrid } from '@/components/stats';
+import { Trend, type TrendPoint } from '@/components/trend';
+import { absErrors, claim, mean } from '@/lib/accuracy';
 import { api } from '@/lib/api';
 import { useFormat } from '@/lib/format';
 import { useI18n } from '@/lib/i18n';
 import { useAsync } from '@/lib/use-async';
 import { cn } from '@/lib/utils';
-import type { Me, Rule, ScoredExperiment } from '@/lib/types';
+import type { Rule, ScoredExperiment } from '@/lib/types';
 
 const THRESHOLD = 3;
 
-export function Lab({ me }: { me: Me }) {
+export function Lab() {
   const { t } = useI18n();
   const [round, setRound] = useState(0);
   const { data, loading, error } = useAsync(() => api.ledger(), [round]);
-  const { counts } = me;
 
   if (error) return <Failed onRetry={() => setRound((n) => n + 1)} />;
 
+  const scores = data?.scores ?? [];
+
   return (
     <>
-      <StatGrid
-        stats={[
-          { value: counts.videos, label: t('stat.videos') },
-          { value: counts.running, label: t('stat.running') },
-          { value: counts.settled, label: t('stat.settled') },
-          { value: counts.overdue, label: t('stat.overdue'), alert: counts.overdue > 0 },
-          { value: counts.tenets, label: t('stat.rules') },
-        ]}
-      />
-
-      {data && data.scores.length >= 2 && (
-        <>
-          <SectionTitle>{t('section.accuracy')}</SectionTitle>
-          <div className="border-y py-5">
-            <Accuracy scores={data.scores} />
-          </div>
-        </>
-      )}
+      {/* the ledger's own accuracy, above the tests it grades */}
+      {scores.length > 0 && <Scoreboard scores={scores} />}
 
       <SectionTitle>{t('section.running')}</SectionTitle>
       {loading ? (
@@ -52,7 +40,18 @@ export function Lab({ me }: { me: Me }) {
           ))}
         </List>
       ) : (
-        <Empty>{t('empty.running')}</Empty>
+        <Empty
+          action={
+            <Button variant="outline" size="sm" asChild>
+              <a href="#/inbox">
+                {t('empty.runningGo')}
+                <ArrowRight />
+              </a>
+            </Button>
+          }
+        >
+          {t('empty.running')}
+        </Empty>
       )}
 
       <SectionTitle>{t('section.settled')}</SectionTitle>
@@ -97,21 +96,43 @@ export function Lab({ me }: { me: Me }) {
  * claim, and it needs one series to say it — predicted and actual as two lines would put
  * the reader in charge of subtracting.
  */
-function Accuracy({ scores }: { scores: ScoredExperiment[] }) {
+function Scoreboard({ scores }: { scores: ScoredExperiment[] }) {
   const { t } = useI18n();
   const f = useFormat();
 
-  const points: TrendPoint[] = scores.map((score) => ({
+  const errors = absErrors(scores);
+  const points: TrendPoint[] = scores.map((score, index) => ({
     label: f.shortDate(score.closedAt),
-    value: Math.abs(score.ctrDelta ?? 0),
+    value: errors[index]!,
   }));
 
   return (
-    <Trend
-      points={points}
-      caption={t('chart.accuracy')}
-      format={(value) => (value == null ? '' : f.dec(value, 2))}
-    />
+    <>
+      <StatGrid
+        stats={[
+          { value: scores.length, label: t('memory.graded') },
+          { value: f.dec(mean(errors), 2), label: t('memory.error'), lead: true },
+          {
+            value: scores.filter((score) => score.verdict === 'confirmed').length,
+            label: t('lab.confirmed'),
+          },
+        ]}
+      />
+
+      <p className="text-muted-foreground mt-4 text-[15px] text-pretty">
+        {claim(errors, f, t)}
+      </p>
+
+      {points.length >= 2 && (
+        <div className="mt-6 border-y py-5">
+          <Trend
+            points={points}
+            caption={t('chart.accuracy')}
+            format={(value) => (value == null ? '' : f.dec(value, 2))}
+          />
+        </div>
+      )}
+    </>
   );
 }
 

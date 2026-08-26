@@ -7,11 +7,24 @@ export type FilterKey = 'unanswered' | 'aboveMedian' | 'running';
 
 export const FILTERS: FilterKey[] = ['unanswered', 'aboveMedian', 'running'];
 
-export function median(values: Array<number | null>): number | null {
+function quantile(sorted: number[], q: number): number {
+  const at = (sorted.length - 1) * q;
+  const low = Math.floor(at);
+  const high = Math.ceil(at);
+  return low === high ? sorted[low]! : sorted[low]! + (sorted[high]! - sorted[low]!) * (at - low);
+}
+
+export type Band = { low: number; median: number; high: number } | null;
+
+/**
+ * What this channel normally does, as a range rather than a single number. A creator asking
+ * "is 5.2% good?" needs to know that half its videos land between 3.8% and 6.1% — one median
+ * makes every video look either above or below average, which is true and useless.
+ */
+export function band(values: Array<number | null>): Band {
   const sorted = values.filter((value): value is number => value != null).sort((a, b) => a - b);
-  if (sorted.length === 0) return null;
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[middle]! : (sorted[middle - 1]! + sorted[middle]!) / 2;
+  if (sorted.length < 4) return null;
+  return { low: quantile(sorted, 0.25), median: quantile(sorted, 0.5), high: quantile(sorted, 0.75) };
 }
 
 /**
@@ -41,8 +54,8 @@ export function useFeedFilters(posts: FeedPost[] | null | undefined, round: numb
   const benchmark = useMemo(
     () => ({
       // "good" is what this channel usually does, not a number from a blog post
-      ctrPct: median((posts ?? []).map((post) => post.ctrPct)),
-      avgViewPct: median((posts ?? []).map((post) => post.avgViewPct)),
+      ctrPct: band((posts ?? []).map((post) => post.ctrPct)),
+      avgViewPct: band((posts ?? []).map((post) => post.avgViewPct)),
     }),
     [posts],
   );
@@ -52,7 +65,7 @@ export function useFeedFilters(posts: FeedPost[] | null | undefined, round: numb
       if (filters.has('unanswered') && !owesReply.has(post.ytVideoId)) return false;
       if (filters.has('running') && !underTest.has(post.ytVideoId)) return false;
       if (filters.has('aboveMedian')) {
-        return post.ctrPct != null && benchmark.ctrPct != null && post.ctrPct >= benchmark.ctrPct;
+        return post.ctrPct != null && benchmark.ctrPct != null && post.ctrPct >= benchmark.ctrPct.median;
       }
       return true;
     },

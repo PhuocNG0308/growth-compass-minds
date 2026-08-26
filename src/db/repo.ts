@@ -88,8 +88,16 @@ export async function getVideoById(id: string): Promise<Video | undefined> {
   return row;
 }
 
+/** snapshots_video_age allows one row per video per hour, so a re-sync corrects it in place. */
 export async function insertSnapshot(row: Omit<Snapshot, 'id' | 'capturedAt'>): Promise<void> {
-  await sql`insert into snapshots ${sql(row)}`;
+  await sql`
+    insert into snapshots ${sql(row)}
+    on conflict (video_id, age_hours) do update
+      set captured_at = now(), views = excluded.views, likes = excluded.likes,
+          comments = excluded.comments, impressions = excluded.impressions, ctr = excluded.ctr,
+          avg_view_duration_s = excluded.avg_view_duration_s,
+          avg_view_pct = excluded.avg_view_pct,
+          subscribers_gained = excluded.subscribers_gained`;
 }
 
 export async function latestSnapshots(videoIds: string[]): Promise<Snapshot[]> {
@@ -599,11 +607,15 @@ export async function createProposal(input: {
   return row!;
 }
 
-export type ProposalRow = Proposal & { videoTitle: string | null; thumbnailUrl: string | null };
+export type ProposalRow = Proposal & {
+  videoTitle: string | null;
+  thumbnailUrl: string | null;
+  videoPublishedAt: Date | null;
+};
 
 export async function listProposals(channelId: string, status?: string): Promise<ProposalRow[]> {
   return sql<ProposalRow[]>`
-    select p.*, v.title as video_title, v.thumbnail_url
+    select p.*, v.title as video_title, v.thumbnail_url, v.published_at as video_published_at
     from proposals p left join videos v on v.id = p.video_id
     where p.channel_id = ${channelId} ${status ? sql`and p.status = ${status}` : sql``}
     order by p.created_at desc

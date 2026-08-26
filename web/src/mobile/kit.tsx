@@ -160,12 +160,15 @@ export function Sheet({
   title,
   children,
   footer,
+  scroll = true,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
   children: ReactNode;
   footer?: ReactNode;
+  /** Off when the content scrolls itself and needs to pin something to the bottom edge. */
+  scroll?: boolean;
 }) {
   const { t } = useI18n();
 
@@ -192,7 +195,9 @@ export function Sheet({
             </DialogPrimitive.Close>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">{children}</div>
+          <div className={cn('flex min-h-0 flex-1 flex-col', scroll && 'overflow-y-auto overscroll-contain')}>
+            {children}
+          </div>
 
           {footer && <div className="border-t px-4 py-3">{footer}</div>}
         </DialogPrimitive.Content>
@@ -213,11 +218,21 @@ export function StickyBar({ children }: { children: ReactNode }) {
 /** Reserve the height a StickyBar covers, so the last row is never trapped under it. */
 export const STICKY_ROOM = 'pb-20';
 
-export function Empty({ children }: { children: ReactNode }) {
+/** Empty states carry the next action where there is one. */
+export function Empty({ children, action }: { children: ReactNode; action?: ReactNode }) {
   return (
-    <p className="text-muted-foreground px-4 py-8 text-center text-[15px] text-pretty">{children}</p>
+    <div className="px-4 py-8 text-center">
+      <p className="text-muted-foreground text-[15px] text-pretty">{children}</p>
+      {action && <div className="mt-4">{action}</div>}
+    </div>
   );
 }
+
+/** Empty-state action, at touch size. */
+export const emptyAction = cn(
+  focusRing,
+  'border-input hover:bg-accent inline-flex min-h-11 items-center gap-2 rounded-full border px-5 text-sm font-medium',
+);
 
 export function Skeletons({ rows = 3 }: { rows?: number }) {
   return (

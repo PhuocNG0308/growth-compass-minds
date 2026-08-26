@@ -8,9 +8,13 @@ import {
   MoreVertical,
   Search,
   Sparkles,
+  X,
 } from 'lucide-react';
+import { LiveStrip } from '@/components/live-strip';
 import { Thumb } from '@/components/thumb';
-import { Empty, Failed, Sheet, Skeletons, Strip, StripItem } from '@/mobile/kit';
+import { useToast } from '@/components/toast';
+import { useSync } from '@/components/shell';
+import { Empty, Failed, Sheet, Skeletons, Strip, StripItem, emptyAction } from '@/mobile/kit';
 import { api } from '@/lib/api';
 import { useArchive } from '@/lib/archive';
 import { FILTERS, useFeedFilters, type FilterKey } from '@/lib/feed-filters';
@@ -42,7 +46,15 @@ export function MobileFeed() {
   const [chosen, setChosen] = useState<FeedPost | null>(null);
   const { data, loading, error } = useAsync(() => api.feed(), [round]);
   const archive = useArchive();
+  const { sync, syncing } = useSync();
   const { matches } = useFeedFilters(data, round);
+
+  const toggle = (key: FilterKey) =>
+    setFilters((current) => {
+      const next = new Set(current);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
 
   const posts = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -57,10 +69,26 @@ export function MobileFeed() {
 
   if (loading) return <Skeletons />;
   if (error) return <Failed onRetry={() => setRound((n) => n + 1)} />;
-  if (!data?.length) return <Empty>{t('empty.videos')}</Empty>;
+  if (!data?.length) {
+    return (
+      <Empty
+        action={
+          <button onClick={sync} disabled={syncing} className={emptyAction}>
+            {t(syncing ? 'shell.syncing' : 'shell.sync')}
+          </button>
+        }
+      >
+        {t('empty.videos')}
+      </Empty>
+    );
+  }
 
   return (
     <>
+      <div className="px-4">
+        <LiveStrip />
+      </div>
+
       <div className="flex items-center gap-2 px-4 pb-3">
         <div className="relative min-w-0 flex-1">
           <Search className="text-muted-foreground pointer-events-none absolute top-3 left-4 size-4" />
@@ -104,6 +132,27 @@ export function MobileFeed() {
         ))}
       </Strip>
 
+      {/* the tinted button says a filter is on, not which one */}
+      {filters.size > 0 && (
+        <Strip snap="none" className="pb-3">
+          {FILTERS.filter((key) => filters.has(key)).map((key) => (
+            <StripItem key={key}>
+              <button
+                onClick={() => toggle(key)}
+                aria-label={t('feed.removeFilter', { name: t(`filter.${key}`) })}
+                className={cn(
+                  focusRing,
+                  'bg-secondary flex min-h-11 items-center gap-2 rounded-full pr-3 pl-4 text-sm font-medium',
+                )}
+              >
+                {t(`filter.${key}`)}
+                <X className="size-4" />
+              </button>
+            </StripItem>
+          ))}
+        </Strip>
+      )}
+
       {posts.length === 0 ? (
         <Empty>
           {t(tab === 'hidden' && !query && filters.size === 0 ? 'empty.hidden' : 'empty.filtered')}
@@ -125,13 +174,7 @@ export function MobileFeed() {
             return (
               <button
                 key={key}
-                onClick={() =>
-                  setFilters((current) => {
-                    const next = new Set(current);
-                    if (!next.delete(key)) next.add(key);
-                    return next;
-                  })
-                }
+                onClick={() => toggle(key)}
                 aria-pressed={on}
                 className={cn(
                   focusRing,
@@ -218,7 +261,8 @@ function Actions({
   archive: ReturnType<typeof useArchive>;
   onClose: () => void;
 }) {
-  const { t } = useI18n();
+  const { t, plural } = useI18n();
+  const notify = useToast();
   if (!post) return null;
 
   const href = `#/post/${encodeURIComponent(post.ytVideoId)}`;
@@ -242,8 +286,13 @@ function Actions({
         </a>
         <button
           onClick={() => {
+            const snapshot = archive.ids;
+            const hiding = !hidden;
             archive.toggle(post.ytVideoId);
             onClose();
+            notify(plural(hiding ? 'feed.didHide' : 'feed.didUnhide', 1), 'ok', () =>
+              archive.restore(snapshot),
+            );
           }}
           className={row}
         >

@@ -1,31 +1,172 @@
-import { useState } from 'react';
-import { Check, X } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { Check, Clock, TriangleAlert, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Thumb } from '@/components/thumb';
-import { useToast } from '@/components/toast';
+import { UNDO_MS, useToast } from '@/components/toast';
 import { api } from '@/lib/api';
 import { useFormat } from '@/lib/format';
 import { useI18n } from '@/lib/i18n';
 import { cn, focusRing } from '@/lib/utils';
 import type { Concept, Proposal } from '@/lib/types';
 
-export function ProposalList({ proposals, onDecided }: { proposals: Proposal[]; onDecided: () => void }) {
+export type Decide = (id: string, status: 'approved' | 'dismissed', choice?: string) => void;
+
+// the same window the checkpoint runner treats as rescuable, seen from the creator's side
+const REACTION_WINDOW_H = 72;
+const CRITICAL_H = 6;
+const SOON_H = 24;
+const PACKAGING: ReadonlySet<Proposal['kind']> = new Set(['title', 'thumbnail', 'hook', 'community']);
+
+/**
+ * Repackaging only pays while YouTube is still choosing who to show the video to. Three
+ * tiers, and only the two that can still be missed get a filled badge.
+ */
+export function ReactionWindow({ proposal }: { proposal: Proposal }) {
+  const { t } = useI18n();
+  const f = useFormat();
+
+  if (!proposal.videoPublishedAt || !PACKAGING.has(proposal.kind)) return null;
+  const closesAt = new Date(proposal.videoPublishedAt).getTime() + REACTION_WINDOW_H * 3_600_000;
+  const hoursLeft = (closesAt - Date.now()) / 3_600_000;
+  if (hoursLeft <= 0) return null;
+
+  const when = f.since(new Date(closesAt).toISOString());
+  if (hoursLeft >= SOON_H) {
+    return (
+      <span className="text-muted-foreground flex items-center gap-2 text-xs">
+        <Clock className="size-4" />
+        {t('proposal.window', { when })}
+      </span>
+    );
+  }
+
+  const critical = hoursLeft < CRITICAL_H;
+  const Icon = critical ? TriangleAlert : Clock;
+
+  return (
+    <span
+      className={cn(
+        'flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium',
+        critical
+          ? 'border-destructive/35 bg-destructive/10 text-destructive'
+          : 'border-warning/35 bg-warning/10 text-warning',
+      )}
+    >
+      <Icon className="size-4" />
+      {t(critical ? 'proposal.windowNow' : 'proposal.window', { when })}
+    </span>
+  );
+}
+
+/**
+ * A decision is spent attention, and a misclick that cannot be taken back makes a creator
+ * slow down on every card after it. The server has no way to un-decide, so the card leaves
+ * the list at once and the request is held back for as long as the toast offers to undo it.
+ */
+export function useDecide(onCommitted: () => void): {
+  decide: Decide;
+  dismissAll: (ids: string[]) => void;
+  pending: Set<string>;
+} {
+  const { t, plural } = useI18n();
+  const notify = useToast();
+  const [pending, setPending] = useState<Set<string>>(new Set());
+
+  const drop = (ids: string[]) =>
+    setPending((current) => {
+      const next = new Set(current);
+      for (const id of ids) next.delete(id);
+      return next;
+    });
+
+  /** Held for the undo window, whether it covers one card or forty. */
+  const hold = (ids: string[], message: string, send: () => Promise<void>) => {
+    setPending((current) => new Set([...current, ...ids]));
+
+    let sent = false;
+    const timer = setTimeout(async () => {
+      sent = true;
+      try {
+        await send();
+        onCommitted();
+      } catch {
+        notify(t('proposal.failed'), 'error');
+        drop(ids);
+      }
+    }, UNDO_MS);
+
+    notify(message, 'ok', () => {
+      if (sent) return;
+      clearTimeout(timer);
+      drop(ids);
+    });
+  };
+
+  const decide: Decide = (id, status, choice) =>
+    hold(
+      [id],
+      t(status === 'approved' ? 'proposal.didApprove' : 'proposal.didDismiss'),
+      async () => {
+        const result = await api.decide(id, status, choice);
+        if (result.opened) {
+          notify(
+            result.opened.checkpoints > 0
+              ? t('proposal.opened', { n: String(result.opened.checkpoints) })
+              : t('proposal.openedUnattached'),
+          );
+        }
+      },
+    );
+
+  // dismissal only: a bulk approve would open experiments on predictions nobody read
+  const dismissAll = (ids: string[]) =>
+    hold(ids, plural('proposal.didDismissMany', ids.length), async () => {
+      await Promise.all(ids.map((id) => api.decide(id, 'dismissed')));
+    });
+
+  return { decide, dismissAll, pending };
+}
+
+export function ProposalList({ proposals, onDecide }: { proposals: Proposal[]; onDecide: Decide }) {
+  const rows = useRef<Array<HTMLDivElement | null>>([]);
+
   return (
     <Card className="gap-0 py-0">
-      {proposals.map((proposal) => (
-        <ProposalRow key={proposal.id} proposal={proposal} onDecided={onDecided} />
+      {proposals.map((proposal, index) => (
+        <ProposalRow
+          key={proposal.id}
+          proposal={proposal}
+          onDecide={onDecide}
+          first={index === 0}
+          bind={(node) => {
+            rows.current[index] = node;
+          }}
+          onMove={(delta) =>
+            rows.current[Math.min(Math.max(index + delta, 0), proposals.length - 1)]?.focus()
+          }
+        />
       ))}
     </Card>
   );
 }
 
-function ProposalRow({ proposal, onDecided }: { proposal: Proposal; onDecided: () => void }) {
+function ProposalRow({
+  proposal,
+  onDecide,
+  first,
+  bind,
+  onMove,
+}: {
+  proposal: Proposal;
+  onDecide: Decide;
+  first: boolean;
+  bind: (node: HTMLDivElement | null) => void;
+  onMove: (delta: number) => void;
+}) {
   const { t } = useI18n();
   const f = useFormat();
-  const notify = useToast();
-  const [busy, setBusy] = useState(false);
   const concepts = proposal.payload?.concepts ?? [];
   // a radio group with nothing selected looks broken, and the server would silently fall
   // back to the first concept anyway — so say which one that is
@@ -33,28 +174,35 @@ function ProposalRow({ proposal, onDecided }: { proposal: Proposal; onDecided: (
     concepts[0]?.label ?? proposal.options[0] ?? null,
   );
 
-  async function decide(status: 'approved' | 'dismissed') {
-    setBusy(true);
-    try {
-      const result = await api.decide(proposal.id, status, choice ?? undefined);
-      if (result.opened) {
-        notify(
-          result.opened.checkpoints > 0
-            ? t('proposal.opened', { n: String(result.opened.checkpoints) })
-            : t('proposal.openedUnattached'),
-        );
-      }
-      onDecided();
-    } catch {
-      notify(t('proposal.failed'), 'error');
-      setBusy(false);
-      return;
-    }
-    setBusy(false);
-  }
+  const decide = (status: 'approved' | 'dismissed') =>
+    onDecide(proposal.id, status, choice ?? undefined);
+
+  const SHORTCUTS: Record<string, () => void> = {
+    j: () => onMove(1),
+    k: () => onMove(-1),
+    a: () => decide('approved'),
+    x: () => decide('dismissed'),
+  };
 
   return (
-    <div className="flex flex-col gap-4 border-b p-5 last:border-b-0 sm:flex-row">
+    <div
+      ref={bind}
+      // one tab stop for the queue; j/k move within it
+      tabIndex={first ? 0 : -1}
+      aria-keyshortcuts="j k a x"
+      onKeyDown={(event) => {
+        // the card only owns the keys while nothing inside it does
+        if (event.target !== event.currentTarget) return;
+        const act = SHORTCUTS[event.key.toLowerCase()];
+        if (!act) return;
+        event.preventDefault();
+        act();
+      }}
+      className={cn(
+        focusRing,
+        'flex flex-col gap-4 border-b p-5 last:border-b-0 sm:flex-row',
+      )}
+    >
       {proposal.videoTitle && (
         <Thumb url={proposal.thumbnailUrl} title={proposal.videoTitle} className="w-full self-start sm:w-40" />
       )}
@@ -64,6 +212,7 @@ function ProposalRow({ proposal, onDecided }: { proposal: Proposal; onDecided: (
           <Badge variant="secondary" className="bg-primary/20 text-primary">
             {t(`proposal.${proposal.kind}`)}
           </Badge>
+          <ReactionWindow proposal={proposal} />
           <span className="text-xs text-muted-foreground">{f.since(proposal.createdAt)}</span>
         </div>
 
@@ -112,11 +261,11 @@ function ProposalRow({ proposal, onDecided }: { proposal: Proposal; onDecided: (
         )}
 
         <div className="mt-4 flex gap-2">
-          <Button size="sm" disabled={busy} onClick={() => decide('approved')}>
+          <Button size="sm" onClick={() => decide('approved')}>
             <Check />
             {t(concepts.length > 0 ? 'proposal.commit' : 'proposal.approve')}
           </Button>
-          <Button size="sm" variant="ghost" disabled={busy} onClick={() => decide('dismissed')}>
+          <Button size="sm" variant="ghost" onClick={() => decide('dismissed')}>
             <X />
             {t('proposal.dismiss')}
           </Button>

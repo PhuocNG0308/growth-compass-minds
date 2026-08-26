@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { TriangleAlert } from 'lucide-react';
+import { ArrowRight, TriangleAlert, X } from 'lucide-react';
 import { Alert, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Empty, Failed, List, Loading, SectionTitle, SubTitle } from '@/components/shell';
-import { ProposalList } from '@/components/proposals';
+import { ProposalList, useDecide } from '@/components/proposals';
 import { api } from '@/lib/api';
 import { useFormat } from '@/lib/format';
 import { useI18n } from '@/lib/i18n';
@@ -13,14 +14,13 @@ import type { Activity, Me } from '@/lib/types';
 
 export function Inbox({ me }: { me: Me }) {
   const { t, plural } = useI18n();
-  const f = useFormat();
   const [round, setRound] = useState(0);
   const proposals = useAsync(() => api.proposals(), [round]);
   const activity = useAsync(() => api.activity(), [round]);
-  const chats = useAsync(() => api.chats(), [round]);
   const retry = () => setRound((n) => n + 1);
+  const { decide, dismissAll, pending } = useDecide(retry);
 
-  const waiting = proposals.data ?? [];
+  const waiting = (proposals.data ?? []).filter((proposal) => !pending.has(proposal.id));
 
   return (
     <>
@@ -34,9 +34,21 @@ export function Inbox({ me }: { me: Me }) {
       <SectionTitle
         action={
           waiting.length > 0 && (
-            <span className="bg-secondary tabular rounded-full px-3 py-1 text-sm font-medium">
-              {waiting.length}
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="bg-secondary tabular rounded-full px-3 py-1 text-sm font-medium">
+                {waiting.length}
+              </span>
+              {waiting.length > 1 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => dismissAll(waiting.map((proposal) => proposal.id))}
+                >
+                  <X />
+                  {t('proposal.dismissAll')}
+                </Button>
+              )}
+            </div>
           )
         }
       >
@@ -47,50 +59,26 @@ export function Inbox({ me }: { me: Me }) {
       ) : proposals.error ? (
         <Failed onRetry={retry} />
       ) : waiting.length ? (
-        <ProposalList proposals={waiting} onDecided={() => setRound((n) => n + 1)} />
+        <>
+          {waiting.length > 1 && (
+            <p className="text-muted-foreground -mt-1 mb-3 text-xs">{t('proposal.keys')}</p>
+          )}
+          <ProposalList proposals={waiting} onDecide={decide} />
+        </>
       ) : (
         <p className="text-muted-foreground text-[15px]">{t('empty.proposals')}</p>
       )}
 
-      <SubTitle
-        action={
-          <a
-            href="#/chats"
-            className={cn(focusRing, 'text-muted-foreground hover:text-primary rounded-md text-xs font-medium')}
-          >
-            {t('rail.allChats')}
-          </a>
-        }
+      <a
+        href="#/chats"
+        className={cn(
+          focusRing,
+          'text-muted-foreground hover:text-primary mt-6 inline-flex items-center gap-2 rounded-md text-sm font-medium',
+        )}
       >
-        {t('section.chats')}
-      </SubTitle>
-      {chats.loading ? (
-        <Loading rows={2} height="h-20" />
-      ) : chats.error ? (
-        <Failed onRetry={retry} />
-      ) : chats.data?.length ? (
-        <List>
-          {chats.data.slice(0, 6).map((thread) => (
-            <a
-              key={thread.id}
-              href={
-                thread.subjectKind === 'video'
-                  ? `#/post/${encodeURIComponent(thread.subjectId)}`
-                  : `#/viewer/${encodeURIComponent(thread.subjectId)}`
-              }
-              className={cn(focusRing, 'hover:bg-accent block p-4')}
-            >
-              <div className="flex items-center justify-between gap-3">
-                <span className="truncate text-[15px] font-medium">{thread.title}</span>
-                <span className="text-muted-foreground shrink-0 text-xs">{f.since(thread.lastMessageAt)}</span>
-              </div>
-              <p className="text-muted-foreground mt-1 line-clamp-2 text-sm">{thread.lastBody}</p>
-            </a>
-          ))}
-        </List>
-      ) : (
-        <Empty>{t('empty.chats')}</Empty>
-      )}
+        {t('rail.allChats')}
+        <ArrowRight className="size-4" />
+      </a>
 
       <SubTitle>{t('section.activity')}</SubTitle>
       {activity.loading ? (

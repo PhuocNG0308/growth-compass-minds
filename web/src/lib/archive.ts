@@ -39,5 +39,7 @@ export function useArchive() {
     );
   }, []);
 
-  return { ids, toggle, setMany, has: (id: string) => ids.includes(id) };
+  const restore = useCallback((snapshot: string[]) => setIds(write([...snapshot])), []);
+
+  return { ids, toggle, setMany, restore, has: (id: string) => ids.includes(id) };
 }

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Check, TriangleAlert, X } from 'lucide-react';
-import { useToast } from '@/components/toast';
+import { ReactionWindow, useDecide, type Decide } from '@/components/proposals';
 import { Thumb } from '@/components/thumb';
 import {
   Disclosure,
@@ -27,8 +27,9 @@ export function MobileInbox({ me }: { me: Me }) {
   const activity = useAsync(() => api.activity(), [round]);
   const chats = useAsync(() => api.chats(), [round]);
   const retry = () => setRound((n) => n + 1);
+  const { decide, pending } = useDecide(retry);
 
-  const waiting = proposals.data ?? [];
+  const waiting = (proposals.data ?? []).filter((proposal) => !pending.has(proposal.id));
 
   return (
     <>
@@ -47,7 +48,7 @@ export function MobileInbox({ me }: { me: Me }) {
         ) : waiting.length ? (
           <div className="space-y-3 px-4">
             {waiting.map((proposal) => (
-              <ProposalCard key={proposal.id} proposal={proposal} onDecided={retry} />
+              <ProposalCard key={proposal.id} proposal={proposal} onDecide={decide} />
             ))}
           </div>
         ) : (
@@ -115,31 +116,14 @@ export function MobileInbox({ me }: { me: Me }) {
  * rationale folds away, and the concepts become a swipe: comparing three numbers is exactly
  * what a horizontal strip is for.
  */
-function ProposalCard({ proposal, onDecided }: { proposal: Proposal; onDecided: () => void }) {
+function ProposalCard({ proposal, onDecide }: { proposal: Proposal; onDecide: Decide }) {
   const { t } = useI18n();
   const f = useFormat();
-  const notify = useToast();
   const concepts = proposal.payload?.concepts ?? [];
   const [choice, setChoice] = useState(concepts[0]?.label ?? proposal.options[0] ?? null);
-  const [busy, setBusy] = useState(false);
 
-  async function decide(status: 'approved' | 'dismissed') {
-    setBusy(true);
-    try {
-      const result = await api.decide(proposal.id, status, choice ?? undefined);
-      if (result.opened) {
-        notify(
-          result.opened.checkpoints > 0
-            ? t('proposal.opened', { n: String(result.opened.checkpoints) })
-            : t('proposal.openedUnattached'),
-        );
-      }
-      onDecided();
-    } catch {
-      notify(t('proposal.failed'), 'error');
-      setBusy(false);
-    }
-  }
+  const decide = (status: 'approved' | 'dismissed') =>
+    onDecide(proposal.id, status, choice ?? undefined);
 
   return (
     <article className="bg-card overflow-hidden rounded-2xl border">
@@ -147,6 +131,7 @@ function ProposalCard({ proposal, onDecided }: { proposal: Proposal; onDecided: 
         <span className="bg-primary/15 text-primary rounded-full px-3 py-1 text-xs font-semibold">
           {t(`proposal.${proposal.kind}`)}
         </span>
+        <ReactionWindow proposal={proposal} />
         <span className="text-muted-foreground text-xs">{f.since(proposal.createdAt)}</span>
       </div>
 
@@ -191,10 +176,9 @@ function ProposalCard({ proposal, onDecided }: { proposal: Proposal; onDecided: 
       <div className="mt-4 grid grid-cols-[1fr_auto] gap-2 border-t p-3">
         <button
           onClick={() => decide('approved')}
-          disabled={busy}
           className={cn(
             focusRing,
-            'bg-primary text-primary-foreground flex min-h-12 items-center justify-center gap-2 rounded-full text-sm font-semibold disabled:opacity-50',
+            'bg-primary text-primary-foreground flex min-h-12 items-center justify-center gap-2 rounded-full text-sm font-semibold',
           )}
         >
           <Check className="size-5" />
@@ -202,11 +186,10 @@ function ProposalCard({ proposal, onDecided }: { proposal: Proposal; onDecided: 
         </button>
         <button
           onClick={() => decide('dismissed')}
-          disabled={busy}
           aria-label={t('proposal.dismiss')}
           className={cn(
             focusRing,
-            'text-muted-foreground grid size-12 place-items-center rounded-full border disabled:opacity-50',
+            'text-muted-foreground grid size-12 place-items-center rounded-full border',
           )}
         >
           <X className="size-5" />

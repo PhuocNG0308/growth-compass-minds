@@ -1,18 +1,21 @@
-import { useState } from 'react';
-import { ArrowLeft } from 'lucide-react';
+import { useId, useState } from 'react';
 import { AskPanel } from '@/components/ask-panel';
-import { Card } from '@/components/ui/card';
-import { Chips, Empty, Failed, List, Loading, SectionTitle } from '@/components/shell';
+import { SidePanel } from '@/components/side-panel';
+import { Chips, Empty, Failed, List, Loading, Modelled, SectionTitle } from '@/components/shell';
 import { RetentionChart } from '@/components/retention';
+import { Crumbs, postHref, type PostSection } from '@/components/video-nav';
 import { Trend, type TrendPoint } from '@/components/trend';
-import { Thumb } from '@/components/thumb';
 import { CommentLine } from '@/pages/feed';
 import { api } from '@/lib/api';
+import { askSuggestions } from '@/lib/ask-suggestions';
 import { useFormat } from '@/lib/format';
 import { useI18n } from '@/lib/i18n';
-import { useAsync } from '@/lib/use-async';
+import { useAsync, type Async } from '@/lib/use-async';
 import { cn, focusRing } from '@/lib/utils';
-import type { PostComment, Snapshot } from '@/lib/types';
+import type { PostComment, PostDetail, Snapshot } from '@/lib/types';
+
+// how many comments the ask route puts in front of the Mind, which is what its citations index
+const BRIEFED = 40;
 
 const FILTERS = ['all', 'superfan', 'potential', 'question', 'criticism'] as const;
 type Filter = (typeof FILTERS)[number];
@@ -23,94 +26,206 @@ function keep(comment: PostComment, filter: Filter) {
   return comment.triage === filter;
 }
 
-export function Post({ ytVideoId, focusAsk }: { ytVideoId: string; focusAsk?: boolean }) {
+/**
+ * One video, split the way the questions about it are: how did it do, where did people leave,
+ * what did they say. The column on the left says which video and holds the switch between them,
+ * so each of these screens can be about one thing.
+ */
+export function Post({
+  ytVideoId,
+  section,
+  behind,
+  video,
+  demo,
+  onRetry,
+}: {
+  ytVideoId: string;
+  section: PostSection;
+  behind: Exclude<PostSection, 'ask'>;
+  video: Async<PostDetail | null>;
+  /** The sample channel cannot measure click-through or retention, and has to say so. */
+  demo: boolean;
+  onRetry: () => void;
+}) {
   const { t } = useI18n();
   const f = useFormat();
   const [filter, setFilter] = useState<Filter>('all');
-  const [round, setRound] = useState(0);
-  const { data, loading, error } = useAsync(() => api.post(ytVideoId), [ytVideoId, round]);
+  const [draft, setDraft] = useState('');
+  const [moment, setMoment] = useState<number | null>(null);
 
-  if (loading) return <Loading rows={3} />;
-  if (error || !data) return <Failed onRetry={() => setRound((n) => n + 1)} />;
+  if (video.loading) return <Loading rows={3} />;
+  if (video.error || !video.data) return <Failed onRetry={onRetry} />;
 
-  const { post, comments, retention, history } = data;
+  const { post, comments, retention, history } = video.data;
   const shown = comments.filter((comment) => keep(comment, filter));
 
   return (
     <>
-      <a href="#/" className={cn(focusRing, 'text-muted-foreground hover:text-primary mb-4 inline-flex items-center gap-2 text-sm')}>
-        <ArrowLeft className="size-4" />
-        {t('post.back')}
-      </a>
+      <Crumbs title={post.title} section={behind} />
+      <h1 className="mb-6 text-2xl font-normal tracking-tight">{t(`section.${behind}`)}</h1>
 
-      <Card className="gap-0 overflow-hidden py-0">
-        <div className="px-4 pt-4">
-          <h1 className="text-xl leading-snug font-semibold">{post.title}</h1>
-          <p className="text-muted-foreground mt-1 text-sm">
-            {f.longDate(post.publishedAt)} · {f.clock(post.durationS)}
-          </p>
-        </div>
-
-        <Thumb
-          url={post.thumbnailUrl}
-          title={post.title}
-          duration={post.durationS == null ? undefined : f.clock(post.durationS)}
-          className="mt-3 rounded-none"
-        />
-
-        <div className="grid grid-cols-2 gap-px border-t @md:grid-cols-4">
-          <Cell label={t('metric.views')} value={f.int(post.views)} />
-          <Cell label={t('metric.ctrPct')} value={f.pct(post.ctrPct, 1)} />
-          <Cell label={t('metric.avgViewPct')} value={f.pct(post.avgViewPct)} />
-          <Cell label={t('metric.comments')} value={f.int(post.commentCount)} />
-        </div>
-      </Card>
-
-      <AskPanel
-        subject={{
-          ask: (question, mentions) => api.ask(ytVideoId, question, mentions),
-          chat: () => api.chat(ytVideoId),
+      <SidePanel
+        open={section === 'ask'}
+        onOpenChange={(open) => {
+          if (!open) location.hash = postHref(ytVideoId);
         }}
-        suggestions={SUGGESTIONS}
-        autoFocus={focusAsk}
-      />
+        title={t('ask.title')}
+      >
+        <AskPanel
+          fill
+          subject={{
+            ask: (question, mentions, onStage) => api.ask(ytVideoId, question, mentions, onStage),
+            chat: () => api.chat(ytVideoId),
+          }}
+          suggestions={askSuggestions(video.data)}
+          draft={draft}
+          sources={{
+            // the same slice, in the same order, that the ask route briefs the Mind with:
+            // both read `commentsForVideo`, so [c3] means the third of these
+            comments: comments.slice(0, BRIEFED),
+            at: (ratio) =>
+              post.durationS ? f.clock(ratio * post.durationS) : `${Math.round(ratio * 100)}%`,
+            onSeek: (ratio) => {
+              setMoment(ratio);
+              location.hash = postHref(ytVideoId, 'retention');
+            },
+          }}
+          autoFocus
+        />
+      </SidePanel>
 
-      <SectionTitle>{t('section.trajectory')}</SectionTitle>
-      <Trajectory history={history} />
+      {behind === 'analytics' && (
+        <>
+          <dl className="bg-border grid grid-cols-2 gap-px overflow-hidden rounded-xl border @md:grid-cols-4">
+            <Cell label={t('metric.views')} value={f.int(post.views)} />
+            <Cell label={t('metric.ctrPct')} value={f.pct(post.ctrPct, 1)} modelled={demo} />
+            <Cell label={t('metric.avgViewPct')} value={f.pct(post.avgViewPct)} modelled={demo} />
+            <Cell label={t('metric.comments')} value={f.int(post.commentCount)} />
+          </dl>
 
-      <SectionTitle>{t('section.retention')}</SectionTitle>
-      {retention ? (
-        <div className="border-y">
-          <RetentionChart retention={retention} durationS={post.durationS} />
-        </div>
-      ) : (
-        <Empty>{t('empty.retention')}</Empty>
+          <SectionTitle>{t('section.trajectory')}</SectionTitle>
+          <Trajectory history={history} />
+        </>
       )}
 
-      <div className="mt-6 mb-3 flex items-center justify-between gap-3">
-        <h2 className="text-xl font-semibold tracking-tight">{t('section.comments')}</h2>
-        <span className="text-muted-foreground text-sm">{shown.length}</span>
+      {behind === 'retention' &&
+        (retention ? (
+          <Retention
+            ytVideoId={ytVideoId}
+            retention={retention}
+            durationS={post.durationS}
+            demo={demo}
+            focus={moment}
+            onAsk={(question) => {
+              setDraft(question);
+              location.hash = postHref(ytVideoId, 'ask');
+            }}
+          />
+        ) : (
+          <Empty>{t('empty.retention')}</Empty>
+        ))}
+
+      {behind === 'comments' && (
+        <>
+          <Chips
+            options={FILTERS.map((key) => ({
+              key,
+              label: t(`filter.${key}`),
+              count: key === 'all' ? undefined : comments.filter((c) => keep(c, key)).length,
+            }))}
+            value={filter}
+            onChange={(key) => setFilter(key as Filter)}
+          />
+
+          {shown.length ? (
+            <List>
+              {shown.map((comment) => (
+                <CommentLine key={comment.ytCommentId} comment={comment} />
+              ))}
+            </List>
+          ) : (
+            <Empty>{t(comments.length ? 'empty.filter' : 'empty.comments')}</Empty>
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
+/**
+ * A curve on its own says how many stayed; it takes a second curve to say whether that was
+ * good for this channel. The one being compared against is the creator's own choice, because
+ * only they know which of their videos is the one that worked.
+ */
+function Retention({
+  ytVideoId,
+  retention,
+  durationS,
+  demo,
+  focus,
+  onAsk,
+}: {
+  ytVideoId: string;
+  retention: NonNullable<PostDetail['retention']>;
+  durationS: number | null;
+  demo: boolean;
+  focus: number | null;
+  onAsk: (question: string) => void;
+}) {
+  const { t } = useI18n();
+  const [against, setAgainst] = useState('');
+  const pickerId = useId();
+
+  const feed = useAsync(() => api.feed(), []);
+  const other = useAsync(() => (against ? api.post(against) : Promise.resolve(null)), [against]);
+
+  const curve = other.data?.retention;
+  const compare = curve ? { title: other.data!.post.title, points: curve.points } : null;
+
+  return (
+    <>
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <label htmlFor={pickerId} className="text-muted-foreground text-sm">
+          {t('video.compareWith')}
+        </label>
+        <select
+          id={pickerId}
+          value={against}
+          onChange={(event) => setAgainst(event.target.value)}
+          className={cn(focusRing, 'bg-background h-10 max-w-80 rounded-full border px-4 text-sm')}
+        >
+          <option value="">{t('video.compareNone')}</option>
+          {(feed.data ?? [])
+            .filter((post) => post.ytVideoId !== ytVideoId)
+            .map((post) => (
+              <option key={post.ytVideoId} value={post.ytVideoId}>
+                {post.title}
+              </option>
+            ))}
+        </select>
+
+        <p role="status" className="text-muted-foreground text-xs empty:hidden">
+          {other.loading
+            ? t('state.loading')
+            : against && !curve
+              ? t('video.compareNoData')
+              : compare
+                ? t('video.compareBy')
+                : ''}
+        </p>
       </div>
 
-      <Chips
-        options={FILTERS.map((key) => ({
-          key,
-          label: t(`filter.${key}`),
-          count: key === 'all' ? undefined : comments.filter((c) => keep(c, key)).length,
-        }))}
-        value={filter}
-        onChange={(key) => setFilter(key as Filter)}
-      />
+      {demo && <p className="text-muted-foreground mb-3 text-xs">{t('demo.modelledCurve')}</p>}
 
-      {shown.length ? (
-        <List>
-          {shown.map((comment) => (
-            <CommentLine key={comment.ytCommentId} comment={comment} />
-          ))}
-        </List>
-      ) : (
-        <Empty>{t('empty.filter')}</Empty>
-      )}
+      <div className="border-y">
+        <RetentionChart
+          retention={retention}
+          durationS={durationS}
+          compare={compare}
+          focus={focus}
+          onAsk={onAsk}
+        />
+      </div>
     </>
   );
 }
@@ -158,13 +273,13 @@ function Trajectory({ history }: { history: Snapshot[] }) {
 
 const age = (hours: number) => (hours < 48 ? `${hours}h` : `${Math.round(hours / 24)}d`);
 
-function Cell({ label, value }: { label: string; value: string }) {
+function Cell({ label, value, modelled }: { label: string; value: string; modelled?: boolean }) {
   return (
     <div className="bg-card px-4 py-3">
-      <div className="text-muted-foreground text-xs">{label}</div>
-      <div className="tabular text-xl font-medium">{value}</div>
+      <dt className="text-muted-foreground text-xs">
+        {modelled ? <Modelled>{label}</Modelled> : label}
+      </dt>
+      <dd className="tabular text-xl font-medium">{value}</dd>
     </div>
   );
 }
-
-const SUGGESTIONS = ['ask.who', 'ask.why', 'ask.next'];

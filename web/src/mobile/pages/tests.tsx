@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { Trend, type TrendPoint } from '@/components/trend';
 import { Thumb } from '@/components/thumb';
-import { Empty, Failed, Fold, Group, Skeletons, Stat, Strip } from '@/mobile/kit';
+import { Empty, Failed, Fold, Group, Skeletons, Stat, Strip, emptyAction } from '@/mobile/kit';
+import { absErrors, claim, mean } from '@/lib/accuracy';
 import { api } from '@/lib/api';
-import { useFormat } from '@/lib/format';
+import { DASH, useFormat } from '@/lib/format';
 import { useI18n } from '@/lib/i18n';
 import { useAsync } from '@/lib/use-async';
 import { cn } from '@/lib/utils';
@@ -13,22 +14,30 @@ const THRESHOLD = 3;
 
 export function MobileTests({ me }: { me: Me }) {
   const { t } = useI18n();
+  const f = useFormat();
   const [round, setRound] = useState(0);
   const { data, loading, error } = useAsync(() => api.ledger(), [round]);
   const { counts } = me;
 
   if (error) return <Failed onRetry={() => setRound((n) => n + 1)} />;
 
+  const errors = absErrors(data?.scores ?? []);
+
   return (
     <>
-      {/* five tiles stacked is a wall of numbers; flicked through, it is a summary */}
+      {/* six tiles stacked is a wall of numbers; flicked through, it is a summary */}
       <Strip snap="none">
         <Stat value={counts.running} label={t('stat.running')} tone="lead" />
         <Stat value={counts.overdue} label={t('stat.overdue')} tone={counts.overdue > 0 ? 'alert' : undefined} />
         <Stat value={counts.settled} label={t('stat.settled')} />
+        <Stat value={errors.length ? f.dec(mean(errors), 2) : DASH} label={t('memory.error')} />
         <Stat value={counts.tenets} label={t('stat.rules')} />
         <Stat value={counts.videos} label={t('stat.videos')} />
       </Strip>
+
+      {errors.length > 0 && (
+        <p className="mt-4 px-4 text-[15px] leading-relaxed text-pretty">{claim(errors, f, t)}</p>
+      )}
 
       {data && data.scores.length >= 2 && (
         <Group title={t('section.accuracy')}>
@@ -53,7 +62,15 @@ export function MobileTests({ me }: { me: Me }) {
                 ))}
               </div>
             ) : (
-              <Empty>{t('empty.running')}</Empty>
+              <Empty
+                action={
+                  <a href="#/inbox" className={emptyAction}>
+                    {t('empty.runningGo')}
+                  </a>
+                }
+              >
+                {t('empty.running')}
+              </Empty>
             )}
           </Fold>
 

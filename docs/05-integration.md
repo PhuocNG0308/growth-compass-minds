@@ -628,6 +628,46 @@ Dán URL hoặc nội dung file này vào hội thoại với Mind thay vì mô 
 | Tải transcript/caption | Có, nhưng `captions.download` đòi scope `youtube.force-ssl` — tức phá bỏ trạng thái chỉ-đọc |
 | Tự đổi title / thumbnail | Có, nhưng đòi scope ghi. **Đã cố ý không làm** — xem §6c |
 
+## 6g. Dữ liệu demo lấy từ kênh thật
+
+`npm run seed:demo` không còn bịa video. Nó soi một kênh YouTube thật đọc hoàn toàn ở chế độ
+công khai — mặc định `@HardwareHaven`, đổi bằng `DEMO_SOURCE_CHANNEL`.
+
+**Ranh giới, đã kiểm chứng bằng cách gọi trần không credential:**
+
+| Endpoint | Trả về khi không có credential | Kết luận |
+|---|---|---|
+| `videos.list`, `commentThreads.list`, `liveChat/messages` | `PERMISSION_DENIED` — *"Please use API Key or other form of API consumer identity"* | API key là đủ, không cần OAuth |
+| `youtubeanalytics/v2/reports` | `UNAUTHENTICATED` — *"Expected OAuth 2 access token"* | Chỉ chủ kênh |
+
+Nên **impressions, CTR, đường giữ chân, avgViewPct, subscribersGained là không thể có thật**
+với kênh ta không sở hữu. Chúng được suy ra trong [`src/demo.ts`](../src/demo.ts) từ những con
+số có thật, và mọi chỗ hiển thị đều gắn nhãn.
+
+**Ba tầng dữ liệu:**
+
+| Nguồn | Cần gì | Lấy được |
+|---|---|---|
+| Atom feed `feeds/videos.xml` | không gì | video id, tiêu đề, mô tả, thumbnail, thời điểm đăng, **lượt xem**, số lượt đánh giá, cờ Shorts |
+| Trang watch (`/watch?v=`, `/@handle/live`) | không gì | **thời lượng thật**, `isLiveNow`, số người đang xem, thời điểm bắt đầu stream |
+| Data API v3 | `YOUTUBE_API_KEY` | số bình luận, **bình luận thật của người thật**, tin nhắn live chat |
+
+Feed edge của YouTube trả 404/500 cho một kênh đang hoàn toàn bình thường, kéo dài nhiều phút.
+`channelFeed` thử lại 3 lần rồi rơi về bản sao trên đĩa ở `.cache/` — cũ mà thật vẫn hơn rỗng,
+và hơn hẳn bịa.
+
+**Realtime.** Khi `DEMO_MODE=on`, server làm mới mỗi 10 phút ([`src/demo-refresh.ts`](../src/demo-refresh.ts)):
+mỗi lần ghi thêm một snapshot **đo thật**, nên demo càng mở lâu thì biểu đồ quỹ đạo càng ít
+phần mô phỏng. Chạy tay: `npm run refresh:demo`.
+
+**Livestream.** `DEMO_LIVE_CHANNEL` (mặc định `@LofiGirl` — phát 24/7) cấp `GET /api/live`:
+đang phát hay không, tên stream, số người xem, bắt đầu lúc nào — tất cả không cần key. **Tin
+nhắn live chat là phần duy nhất bắt buộc có `YOUTUBE_API_KEY`**; không có key thì `chat: null`
+và dải live vẫn chạy đủ phần còn lại.
+
+Quota: mặc định 10.000 unit/ngày cho endpoint đọc, riêng `search.list` giới hạn 100 call/ngày
+nên không dùng — danh mục lấy qua feed, tốn 0 unit.
+
 ## 6f. Bootstrap Mind — `npm run mind`
 
 Soul, Tenets, Guardrails và Skills **chỉ định nghĩa được bằng hội thoại**. Builder API không có endpoint nào cho chúng, CLI cũng không. Nhưng hội thoại thì script được — và nếu không script, toàn bộ phần được chấm nặng nhất của dự án chỉ tồn tại trong lịch sử chat của một người.

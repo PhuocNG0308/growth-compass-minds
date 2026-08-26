@@ -3,6 +3,8 @@ import * as chat from '../src/db/chat.ts';
 import * as repo from '../src/db/repo.ts';
 import { encrypt } from '../src/crypto.ts';
 import { DEMO_YT_CHANNEL_ID } from '../src/demo.ts';
+import { env } from '../src/env.ts';
+import { pullPublicChannel, resolveSource } from '../src/youtube/public-sync.ts';
 
 // The PRNG is seeded so the shape of the channel — which videos, who comments where, every
 // metric — is identical on every run. Timestamps are the deliberate exception: they are
@@ -28,53 +30,6 @@ const NOW = Date.now();
 const at = (hoursAgo: number) => new Date(NOW - hoursAgo * HOUR);
 const ageHours = (published: Date) => Math.round((NOW - published.getTime()) / HOUR);
 
-function thumbnail(title: string, tint: string): string {
-  const words = title.split(' ');
-  const lines = [words.slice(0, 3).join(' '), words.slice(3, 6).join(' ')].filter(Boolean);
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360">
-    <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="${tint}"/><stop offset="1" stop-color="#1d241f"/>
-    </linearGradient></defs>
-    <rect width="640" height="360" fill="url(#g)"/>
-    ${lines
-      .map(
-        (line, index) =>
-          `<text x="44" y="${168 + index * 58}" font-family="Geist, system-ui, sans-serif" font-size="46" font-weight="600" fill="#f3f6f3">${line.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</text>`,
-      )
-      .join('')}
-  </svg>`;
-  return `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
-}
-
-const TINTS = ['#4f6b55', '#3f5f6b', '#6b5b3f', '#5b4f6b', '#3f6b57', '#6b4f4f', '#47603f', '#3f4a6b'];
-
-const TITLES = [
-  'I rebuilt my desk for the fourth time',
-  'The cheapest good monitor arm',
-  'Cable management is a lie',
-  'Six months with a standing desk',
-  'The keyboard tray nobody talks about',
-  'Fixing my desk lighting for £40',
-  'You do not need a £1000 chair',
-  'Desk tour 2026 — everything on it',
-  'Why I gave up on a second monitor',
-  'The £30 upgrade that beat the £300 one',
-  'Every desk mat I have owned, ranked',
-  'My microphone arm finally stopped drooping',
-  'Testing eight desk lamps in one room',
-  'The drawer unit that changed my workflow',
-  'I measured my desk height for a month',
-  'Cheap laptop stands, honest results',
-  'What a year of standing actually did',
-  'The cable tray I should have bought first',
-  'Rebuilding the shelf above my monitor',
-  'Three cheap chairs against one expensive one',
-  'How I hid every cable in one afternoon',
-  'The monitor size I regret buying',
-  'A quieter keyboard, without spending much',
-  'Everything I removed from my desk',
-];
-
 const NAMES = [
   'brackets_and_bolts', 'Mai', 'quietdesk', 'Tobias R.', 'no_more_cables', 'glassdesk_guy',
   'Priya', 'deskskeptic', 'wiremonkey', 'Sam O.', 'the_tidy_one', 'Hoang', 'benchtop',
@@ -98,25 +53,25 @@ function audience(): string[] {
 }
 
 const COMMENTS = [
-  'What arm is that at 6:40? You never said and I have watched this three times looking for it.',
+  'What is the part you used at 6:40? You never said and I have watched this three times looking for it.',
   'The first two minutes are you explaining what you are about to do. Just do it.',
-  'Please do a follow-up on the lighting one year later. Did the strips hold up?',
+  'Please do a follow-up on this one in a year. Did it hold up?',
   'Came for the rant, stayed for the spreadsheet. More of the spreadsheet please.',
   'New here. Algorithm sent me and I stayed.',
-  'That desk is way too small for two monitors, no way this works long term.',
+  'No way this works long term, but I want to be proved wrong.',
   'Finally someone measured it instead of guessing.',
   'I bought the cheap one on your advice and it has been fine for eight months.',
   'The bit at the end where you admit it did not work is why I subscribe.',
-  'Could you show the underside? That is the part nobody films.',
-  'This is the third video where you mention the drawer unit. Just review it already.',
-  'Disagree on the chair. Mine was worth every penny.',
+  'Could you show the inside? That is the part nobody films.',
+  'This is the third video where you mention it in passing. Just review it already.',
+  'Disagree on this one. Mine was worth every penny.',
   'Watched at 2x and still got everything. Good pacing.',
   'What is the actual model number? The description does not say.',
   'You have talked me out of buying something for the fourth time. Thank you.',
   'The lighting in this one looks noticeably better than the last.',
   'Honestly the intro music is too loud compared to your voice.',
   'Came back to say I did this and it took me two hours, not forty minutes.',
-  'Any chance of a version of this for a smaller room?',
+  'Any chance of a version of this for a smaller budget?',
   'The price comparison at 4:10 is the most useful thing on this channel.',
 ];
 
@@ -141,23 +96,40 @@ const CANDIDATES = [
   'Shorts published the same day cannibalise the long-form video.',
 ];
 
-const SNAPSHOT_AGES = [6, 24, 48, 72, 120, 168, 336, 504, 672, 1008, 1344, 2016, 2688, 4032];
-
 async function main() {
-  console.log(`seeding ${DEMO_YT_CHANNEL_ID} …`);
+  const source = await resolveSource(env.DEMO_SOURCE_CHANNEL);
+  console.log(`seeding ${DEMO_YT_CHANNEL_ID} from ${source.title} (${source.handle}) …`);
 
   // cascade clears videos, comments, experiments, chat and everything hanging off them
   await sql`delete from channels where yt_channel_id = ${DEMO_YT_CHANNEL_ID}`;
 
   const channel = await repo.upsertChannel({
     ytChannelId: DEMO_YT_CHANNEL_ID,
-    title: 'Deskbound',
+    title: source.title,
     refreshToken: encrypt('demo-channel-has-no-google-token'),
   });
   await repo.setReachSyncedThrough(channel.id, new Date(NOW - 2 * 24 * HOUR).toISOString().slice(0, 10));
 
-  const videos = await seedVideos(channel.id);
-  await seedComments(channel.id, videos);
+  const pulled = await pullPublicChannel(channel.id, source, { backfill: true });
+  if (pulled.videos.length === 0) {
+    throw new Error(
+      `no videos came back for ${source.handle}. The feed edge fails intermittently — run it again.`,
+    );
+  }
+
+  // newest first, the way every screen in the app orders a catalogue
+  const videos = [...pulled.videos].sort(
+    (a, b) => b.publishedAt.getTime() - a.publishedAt.getTime(),
+  );
+
+  // a key buys real comments from real people; without one the audience has to be invented,
+  // and saying which of the two happened is the whole point of the banner
+  if (pulled.comments === 0) await seedComments(channel.id, videos);
+  console.log(
+    pulled.comments > 0
+      ? `  ${pulled.comments} real comments from YouTube`
+      : '  comments are modelled — set YOUTUBE_API_KEY for real ones',
+  );
   const experiments = await seedExperiments(channel.id, videos);
   await seedLearnings(channel.id, experiments);
   await seedProposals(channel.id, videos);
@@ -185,72 +157,6 @@ async function main() {
 }
 
 type SeededVideo = { id: string; ytVideoId: string; title: string; publishedAt: Date; durationS: number };
-
-async function seedVideos(channelId: string): Promise<SeededVideo[]> {
-  const drafts = TITLES.map((title, index) => ({
-    ytVideoId: `demo-${index.toString().padStart(2, '0')}`,
-    title,
-    thumbnailUrl: thumbnail(title, TINTS[index % TINTS.length]!),
-    durationS: Math.round(between(280, 1180)),
-    // roughly one video every 11 days, newest two days old
-    publishedAt: at(48 + index * 11 * 24 + between(-18, 18)),
-  }));
-
-  const rows = await repo.upsertVideos(channelId, drafts);
-  const byYtId = new Map(rows.map((row) => [row.ytVideoId, row]));
-
-  for (const draft of drafts) {
-    const video = byYtId.get(draft.ytVideoId)!;
-    await seedSnapshots(video.id, draft);
-  }
-
-  return drafts.map((draft) => ({ ...draft, id: byYtId.get(draft.ytVideoId)!.id }));
-}
-
-async function seedSnapshots(videoId: string, video: { publishedAt: Date; durationS: number }) {
-  const age = ageHours(video.publishedAt);
-  const finalViews = Math.round(between(4200, 68000));
-  const finalCtr = between(3.4, 7.1);
-  const finalAvp = between(29, 54);
-  const subscribers = Math.round(finalViews * between(0.008, 0.024));
-
-  // the newest two videos have no reach report yet, which is the real lag creators hit
-  const reachLags = age < 72;
-
-  for (const mark of SNAPSHOT_AGES) {
-    if (mark > age) break;
-
-    // views climb fast then flatten; this is what makes a trajectory chart worth drawing
-    const maturity = Math.min(1, Math.log10(1 + (mark / age) * 9));
-    const views = Math.round(finalViews * maturity);
-    const ctr = reachLags && mark < 48 ? null : Number(wobble(finalCtr, 0.08).toFixed(4));
-
-    await repo.insertSnapshot({
-      videoId,
-      ageHours: mark,
-      views,
-      likes: Math.round(views * between(0.02, 0.05)),
-      comments: Math.round(views * between(0.001, 0.004)),
-      impressions: ctr === null ? null : Math.round(views / (ctr / 100)),
-      ctr,
-      avgViewDurationS: Math.round((video.durationS * finalAvp) / 100),
-      avgViewPct: Number(wobble(finalAvp, 0.05).toFixed(2)),
-      subscribersGained: Math.round(subscribers * maturity),
-    });
-  }
-
-  const cliff = between(0.12, 0.62);
-  const points = Array.from({ length: 21 }, (_, index) => {
-    const ratio = index / 20;
-    const decay = 1 - ratio * (1 - finalAvp / 100) * 1.35;
-    return {
-      ratio,
-      watchRatio: Math.max(0.08, decay - (Math.abs(ratio - cliff) < 0.03 ? 0.14 : 0)),
-      relative: 0.9,
-    };
-  });
-  await repo.upsertRetention(videoId, points);
-}
 
 async function seedComments(channelId: string, videos: SeededVideo[]) {
   const people = audience().map((displayName, index) => ({
@@ -423,28 +329,35 @@ async function seedLearnings(channelId: string, experiments: Array<{ id: string;
   }
 }
 
+/**
+ * Every proposal names a video the creator can open and check. The numbers quoted come back
+ * out of the database rather than being written here, because a proposal that cites a drop
+ * the retention chart does not show is the fastest way to lose a creator's trust.
+ */
 async function seedProposals(channelId: string, videos: SeededVideo[]) {
+  const [newest, second] = videos;
+  const drop = await steepestDrop(second!.id, second!.durationS);
+  const asked = await openQuestion(videos);
+
   const drafts = [
     {
       kind: 'title' as const,
-      videoId: videos[0]!.id,
-      summary: 'Retitle the desk rebuild — the current one buries the payoff',
-      detail: 'I rebuilt my desk for £180 (fourth attempt)',
+      videoId: newest!.id,
+      summary: `Retitle "${newest!.title}" \u2014 click-through is under what I predicted`,
+      detail:
+        'Put the number or the outcome in the first four words. This title asks the viewer to guess what they get.',
       rationale:
-        'Click-through is running under what I predicted, and this channel has confirmed twice that naming the exact price lifts it. The current title hides both the price and the result.',
-      options: [
-        'I rebuilt my desk for £180 (fourth attempt)',
-        'My fourth desk rebuild finally worked',
-        'The desk rebuild that cost me £180',
-      ],
+        'This channel has confirmed twice that a concrete claim early in the title lifts click-through. The current one names neither the result nor the cost.',
+      options: ['Lead with the number', 'Lead with the outcome', 'Lead with the question it answers'],
     },
     {
       kind: 'hook' as const,
-      videoId: videos[1]!.id,
-      summary: 'Cut the first 12 seconds — the drop-off starts before you finish the intro',
-      detail: 'Open on the finished arm holding the monitor, then cut back to the unboxing.',
-      rationale:
-        'The retention curve loses 9% in the first 20 seconds, and it recovers the moment the product appears. Two earlier videos improved when the payoff came first.',
+      videoId: second!.id,
+      summary: `Move the payoff forward in "${second!.title}"`,
+      detail: 'Open on the result, then cut back to the setup.',
+      rationale: drop
+        ? `The steepest drop on this video is at ${drop.at}, and it costs ${drop.lost} points in one step. Two earlier videos improved when the payoff came first.`
+        : 'Two earlier videos improved when the payoff came first, and nothing in this one arrives before the two-minute mark.',
       options: [],
     },
     {
@@ -477,15 +390,18 @@ async function seedProposals(channelId: string, videos: SeededVideo[]) {
         ],
       },
     },
-    {
-      kind: 'reply' as const,
-      videoId: videos[1]!.id,
-      summary: 'Answer the monitor-arm question — it has been asked three times',
-      detail: 'The model is in the description now, sorry — it is the one from the £40 lighting video.',
-      rationale:
-        'Three separate returning viewers asked the same thing on this video. Answering once publicly closes all three.',
-      options: [],
-    },
+    ...(asked
+      ? [
+          {
+            kind: 'reply' as const,
+            videoId: asked.videoId,
+            summary: `Answer ${asked.comment.displayName} \u2014 the same thing has been asked more than once`,
+            detail: 'It is in the description now, sorry \u2014 answering once publicly closes the rest.',
+            rationale: `They asked: "${asked.comment.text}" Returning viewers who get an answer come back at roughly twice the rate.`,
+            options: [],
+          },
+        ]
+      : []),
   ];
 
   for (const draft of drafts) {
@@ -496,30 +412,66 @@ async function seedProposals(channelId: string, videos: SeededVideo[]) {
   }
 }
 
+/** Read back what the retention chart will draw, so the proposal and the chart agree. */
+async function steepestDrop(
+  videoId: string,
+  durationS: number,
+): Promise<{ at: string; lost: string } | null> {
+  const curve = await repo.latestRetention(videoId);
+  if (!curve || curve.length < 2) return null;
+
+  const worst = curve
+    .slice(1)
+    .map((point, index) => ({ ratio: point.ratio, drop: curve[index]!.watchRatio - point.watchRatio }))
+    .sort((a, b) => b.drop - a.drop)[0];
+  if (!worst || worst.drop <= 0) return null;
+
+  const seconds = Math.round(worst.ratio * durationS);
+  return {
+    at: `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`,
+    lost: (worst.drop * 100).toFixed(1),
+  };
+}
+
+/**
+ * A question the creator can go and read beats an invented one. Which video it sits on is
+ * not something to force: the proposal follows the question, newest video first.
+ */
+async function openQuestion(videos: SeededVideo[]) {
+  for (const video of videos) {
+    const rows = await repo.commentsForVideo(video.id, 60);
+    const comment = rows.find((row) => row.repliedAt == null && row.text.includes('?'));
+    if (comment) return { videoId: video.id, comment };
+  }
+  return null;
+}
+
 async function seedChat(channelId: string, videos: SeededVideo[]) {
+  const [newest, second] = videos;
+
   const conversations = [
     {
-      video: videos[0]!,
+      video: newest!,
       turns: [
-        ['creator', 'Why is click-through down on this one compared to the cable video?'],
+        ['creator', `Why is click-through down on "${newest!.title}" compared to the one before it?`],
         [
           'mind',
-          'Two things separate them. The cable video named a concrete claim in four words; this title is six words and names no outcome. The other difference is the thumbnail — the cable one had a face at roughly 40% of the frame, this one is product-only. That pairing has now cost you click-through three times, which is why it is a Tenet and not a hunch.',
+          'Two things separate them. The one before named a concrete claim in four words; this title is longer and names no outcome. The other difference is the thumbnail \u2014 the earlier one had a face at roughly 40% of the frame, this one is product-only. That pairing has now cost you click-through three times, which is why it is a Tenet and not a hunch.',
         ],
         ['creator', 'So retitle it?'],
         [
           'mind',
-          'Retitle it, and leave the thumbnail alone this week — changing both at once means neither result tells you anything. I have written the title proposal; it is waiting for you.',
+          'Retitle it, and leave the thumbnail alone this week \u2014 changing both at once means neither result tells you anything. I have written the title proposal; it is waiting for you.',
         ],
       ],
     },
     {
-      video: videos[1]!,
+      video: second!,
       turns: [
-        ['creator', 'Pick up where we left off on the monitor arm video.'],
+        ['creator', `Pick up where we left off on "${second!.title}".`],
         [
           'mind',
-          'Last time we agreed to hold the intro to fifteen seconds and watch the 30-second hold. It came in at 41.6% average view percentage against the 42% I predicted, so I was right within half a point and I am not claiming credit for that — it was close enough to be luck. The 9% drop in the first twenty seconds is still there, which is the third video in a row showing it.',
+          'Last time we agreed to hold the intro to fifteen seconds and watch the 30-second hold. It landed within half a point of what I predicted, and I am not claiming credit for that \u2014 it was close enough to be luck. The drop in the opening stretch is still there, which is the third video in a row showing it.',
         ],
       ],
     },

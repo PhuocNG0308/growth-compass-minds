@@ -9,13 +9,18 @@ import {
   CornerDownRight,
   ExternalLink,
   ListFilter,
-  MessageSquare,
+  MoveDown,
+  MoveUp,
+  RefreshCw,
   Search,
   Sparkles,
+  X,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Empty, Failed, Loading } from '@/components/shell';
+import { LiveStrip } from '@/components/live-strip';
+import { Empty, Failed, Loading, Modelled, useSync } from '@/components/shell';
+import { useToast } from '@/components/toast';
 import {
   Table,
   TableBody,
@@ -27,8 +32,8 @@ import {
 import { Thumb } from '@/components/thumb';
 import { api } from '@/lib/api';
 import { useArchive } from '@/lib/archive';
-import { FILTERS, useFeedFilters, type FilterKey } from '@/lib/feed-filters';
-import { useFormat } from '@/lib/format';
+import { FILTERS, useFeedFilters, type Band, type FilterKey } from '@/lib/feed-filters';
+import { DASH, useFormat } from '@/lib/format';
 import { useI18n } from '@/lib/i18n';
 import { useAsync } from '@/lib/use-async';
 import { cn, focusRing } from '@/lib/utils';
@@ -43,11 +48,12 @@ const TABS: Array<[Tab, string]> = [
   ['all', 'feed.tabAll'],
 ];
 
-const COLUMNS: Array<{ field: SortField; key: string; align: string }> = [
+const COLUMNS: Array<{ field: SortField; key: string; align: string; modelled?: boolean }> = [
   { field: 'publishedAt', key: 'col.date', align: 'text-left' },
   { field: 'views', key: 'col.views', align: 'text-right' },
-  { field: 'ctrPct', key: 'col.ctr', align: 'text-right' },
-  { field: 'avgViewPct', key: 'col.avgView', align: 'text-right' },
+  // the two YouTube hands to the channel owner and to nobody else
+  { field: 'ctrPct', key: 'col.ctr', align: 'text-right', modelled: true },
+  { field: 'avgViewPct', key: 'col.avgView', align: 'text-right', modelled: true },
   { field: 'commentCount', key: 'col.comments', align: 'text-right' },
 ];
 
@@ -60,8 +66,9 @@ const sortValue = (post: FeedPost, field: SortField) =>
  * identifier rather than an image to look at, and the per-video actions stay out of the way
  * until the pointer is on the row.
  */
-export function Feed() {
-  const { t } = useI18n();
+export function Feed({ demo }: { demo: boolean }) {
+  const { t, plural } = useI18n();
+  const notify = useToast();
   const [tab, setTab] = useState<Tab>('active');
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<{ field: SortField; asc: boolean }>({
@@ -73,6 +80,7 @@ export function Feed() {
   const [round, setRound] = useState(0);
   const { data, loading, error } = useAsync(() => api.feed(), [round]);
   const archive = useArchive();
+  const { sync, syncing } = useSync();
 
   const { benchmark, matches } = useFeedFilters(data, round);
 
@@ -94,7 +102,20 @@ export function Feed() {
 
   if (loading) return <Loading rows={6} height="h-20" />;
   if (error) return <Failed onRetry={() => setRound((n) => n + 1)} />;
-  if (!data?.length) return <Empty>{t('empty.videos')}</Empty>;
+  if (!data?.length) {
+    return (
+      <Empty
+        action={
+          <Button variant="outline" size="sm" onClick={sync} disabled={syncing}>
+            <RefreshCw className={cn(syncing && 'animate-spin')} />
+            {t(syncing ? 'shell.syncing' : 'shell.sync')}
+          </Button>
+        }
+      >
+        {t('empty.videos')}
+      </Empty>
+    );
+  }
 
   const counts: Record<Tab, number> = {
     active: data.filter((post) => !archive.ids.includes(post.ytVideoId)).length,
@@ -108,9 +129,20 @@ export function Feed() {
     setSelected(new Set());
   };
 
+  // undoing a bulk hide by hiding the same ids again would also unhide whatever the creator
+  // had already put away, so the whole list is what gets put back
+  const undoably = (hidden: boolean, n: number, apply: () => void) => {
+    const snapshot = archive.ids;
+    apply();
+    notify(plural(hidden ? 'feed.didHide' : 'feed.didUnhide', n), 'ok', () =>
+      archive.restore(snapshot),
+    );
+  };
+
   const bulk = (hide: boolean) => {
-    archive.setMany([...selected], hide);
+    const targets = [...selected];
     setSelected(new Set());
+    undoably(hide, targets.length, () => archive.setMany(targets, hide));
   };
 
   const visibleIds = rows.map((post) => post.ytVideoId);
@@ -118,6 +150,8 @@ export function Feed() {
 
   return (
     <>
+      <LiveStrip />
+
       {selected.size > 0 ? (
         // swapping the whole toolbar out is silent to a screen reader unless the count speaks
         <div role="status" className="mb-4 flex h-10 flex-wrap items-center gap-3">
@@ -173,6 +207,10 @@ export function Feed() {
       </div>
       )}
 
+      {filters.size > 0 && selected.size === 0 && (
+        <ActiveFilters value={filters} onChange={reset(setFilters)} />
+      )}
+
       {rows.length === 0 ? (
         <Empty>
           <p>{t(tab === 'hidden' && !query && filters.size === 0 ? 'empty.hidden' : 'empty.filtered')}</p>
@@ -204,7 +242,13 @@ export function Feed() {
               </TableHead>
               <TableHead className="w-2/5">{t('col.video')}</TableHead>
               {COLUMNS.map((column) => (
-                <SortHead key={column.field} column={column} sort={sort} onSort={setSort} />
+                <SortHead
+                  key={column.field}
+                  column={column}
+                  sort={sort}
+                  onSort={setSort}
+                  modelled={demo && column.modelled === true}
+                />
               ))}
             </TableRow>
           </TableHeader>
@@ -214,7 +258,10 @@ export function Feed() {
                 key={post.ytVideoId}
                 post={post}
                 benchmark={benchmark}
-                archive={archive}
+                hidden={archive.has(post.ytVideoId)}
+                onArchive={() =>
+                  undoably(!archive.has(post.ytVideoId), 1, () => archive.toggle(post.ytVideoId))
+                }
                 picked={selected.has(post.ytVideoId)}
                 onPick={() =>
                   setSelected((current) => {
@@ -320,14 +367,56 @@ function FilterMenu({
   );
 }
 
+/** The filter button shows a count, not which filters. Each chip names one and removes it. */
+function ActiveFilters({
+  value,
+  onChange,
+}: {
+  value: Set<FilterKey>;
+  onChange: (next: Set<FilterKey>) => void;
+}) {
+  const { t } = useI18n();
+
+  const without = (key: FilterKey) => {
+    const next = new Set(value);
+    next.delete(key);
+    return next;
+  };
+
+  return (
+    <div className="mb-4 flex flex-wrap items-center gap-2">
+      {FILTERS.filter((key) => value.has(key)).map((key) => (
+        <button
+          key={key}
+          onClick={() => onChange(without(key))}
+          aria-label={t('feed.removeFilter', { name: t(`filter.${key}`) })}
+          className={cn(
+            focusRing,
+            'bg-secondary hover:bg-input flex h-8 items-center gap-2 rounded-full pr-2 pl-3 text-xs font-medium',
+          )}
+        >
+          {t(`filter.${key}`)}
+          <X className="size-3" />
+        </button>
+      ))}
+
+      <Button variant="ghost" size="sm" onClick={() => onChange(new Set())}>
+        {t('feed.clearFilters')}
+      </Button>
+    </div>
+  );
+}
+
 function SortHead({
   column,
   sort,
   onSort,
+  modelled,
 }: {
   column: (typeof COLUMNS)[number];
   sort: { field: SortField; asc: boolean };
   onSort: (next: { field: SortField; asc: boolean }) => void;
+  modelled: boolean;
 }) {
   const { t } = useI18n();
   const active = sort.field === column.field;
@@ -347,7 +436,7 @@ function SortHead({
           active && 'text-foreground',
         )}
       >
-        {t(column.key)}
+        {modelled ? <Modelled>{t(column.key)}</Modelled> : t(column.key)}
         <Arrow className={cn('size-3', !active && 'opacity-30')} />
       </button>
     </TableHead>
@@ -357,21 +446,21 @@ function SortHead({
 function Row({
   post,
   benchmark,
-  archive,
+  hidden,
+  onArchive,
   picked,
   onPick,
 }: {
   post: FeedPost;
-  benchmark: { ctrPct: number | null; avgViewPct: number | null };
-  archive: ReturnType<typeof useArchive>;
+  benchmark: { ctrPct: Band; avgViewPct: Band };
+  hidden: boolean;
+  onArchive: () => void;
   picked: boolean;
   onPick: () => void;
 }) {
   const { t } = useI18n();
   const f = useFormat();
   const href = `#/post/${encodeURIComponent(post.ytVideoId)}`;
-  const hidden = archive.has(post.ytVideoId);
-  const latest = post.topComments[0];
 
   return (
     <TableRow className={cn('group', picked && 'bg-accent')}>
@@ -392,113 +481,118 @@ function Row({
           </a>
 
           <div className="min-w-0 flex-1">
-            <a href={href} className={cn(focusRing, 'block truncate rounded-md font-medium hover:underline')}>
+            <a
+              href={href}
+              title={post.title}
+              className={cn(focusRing, 'line-clamp-2 rounded-md font-medium hover:underline')}
+            >
               {post.title}
             </a>
 
-            {/* One line, two jobs: the newest comment at rest, the row's actions under the
-                pointer. Reserving the height means the table never jumps on hover. */}
-            <div className="relative mt-2 h-8">
-              <p className="text-muted-foreground truncate text-xs group-hover:invisible">
-                {latest ? `${latest.displayName}: ${latest.text}` : t('feed.noComments')}
-              </p>
-
-              {/* opacity alone would leave invisible controls catching clicks, and
-                  visibility:hidden would drop them out of the tab order for good */}
-              <div className="pointer-events-none absolute inset-0 flex items-center gap-1 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
-                <RowAction href={`${href}/ask`} icon={Sparkles} label={t('feed.ask')} />
-                <RowAction href={href} icon={MessageSquare} label={t('feed.comments')} count={post.commentCount} />
-                <RowAction
-                  icon={hidden ? ArchiveRestore : Archive}
-                  label={t(hidden ? 'feed.unhide' : 'feed.hide')}
-                  onClick={() => archive.toggle(post.ytVideoId)}
-                />
-                <RowAction
-                  href={`https://youtu.be/${post.ytVideoId}`}
-                  external
-                  icon={ExternalLink}
-                  label={t('feed.onYouTube')}
-                />
-              </div>
-            </div>
+            <RowActions post={post} hidden={hidden} onArchive={onArchive} />
           </div>
         </div>
       </TableCell>
 
-      <TableCell className="text-muted-foreground text-xs">{f.shortDate(post.publishedAt)}</TableCell>
-      <TableCell className="tabular text-right font-medium">{f.int(post.views)}</TableCell>
-      <TableCell className="text-right">
-        <Mark value={f.pct(post.ctrPct, 1)} tone={rank(post.ctrPct, benchmark.ctrPct)} />
+      <TableCell className="text-muted-foreground align-top text-xs">
+        {f.shortDate(post.publishedAt)}
       </TableCell>
-      <TableCell className="text-right">
-        <Mark value={f.pct(post.avgViewPct)} tone={rank(post.avgViewPct, benchmark.avgViewPct)} />
+      <TableCell className="tabular align-top text-right font-medium">{f.int(post.views)}</TableCell>
+      <TableCell className="align-top text-right">
+        <Mark value={post.ctrPct} band={benchmark.ctrPct} format={(v) => f.pct(v, 1)} />
       </TableCell>
-      <TableCell className="tabular text-muted-foreground text-right">{post.commentCount}</TableCell>
+      <TableCell className="align-top text-right">
+        <Mark value={post.avgViewPct} band={benchmark.avgViewPct} format={(v) => f.pct(v)} />
+      </TableCell>
+      <TableCell className="tabular text-muted-foreground align-top text-right">
+        {post.commentCount}
+      </TableCell>
     </TableRow>
   );
 }
 
-function RowAction({
-  href,
-  external,
-  icon: Icon,
-  label,
-  count,
-  onClick,
+/**
+ * The three things a creator does to a video they have just found in the table. They sit under
+ * the title because that is where the pointer already is, and they hold their space whether or
+ * not they are showing, so a row never moves under the cursor.
+ */
+function RowActions({
+  post,
+  hidden,
+  onArchive,
 }: {
-  href?: string;
-  external?: boolean;
-  icon: typeof Archive;
-  label: string;
-  count?: number;
-  onClick?: () => void;
+  post: FeedPost;
+  hidden: boolean;
+  onArchive: () => void;
 }) {
-  // the column is too narrow for four written labels, so the name lives in the tooltip and
-  // the accessible name, the way the Studio content rows do it
-  const className = cn(
+  const { t } = useI18n();
+  const href = `#/post/${encodeURIComponent(post.ytVideoId)}`;
+  const action = cn(
     focusRing,
-    'hover:bg-secondary text-muted-foreground hover:text-foreground inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-medium whitespace-nowrap',
+    'text-muted-foreground hover:bg-secondary hover:text-foreground grid size-8 place-items-center rounded-full',
   );
-  const body = (
-    <>
-      <Icon className="size-4" />
-      {count != null && <span className="tabular">{count}</span>}
-    </>
-  );
+  const label = t(hidden ? 'feed.unhide' : 'feed.hide');
 
-  if (!href) {
-    return (
-      <button onClick={onClick} title={label} aria-label={label} className={className}>
-        {body}
+  return (
+    <div className="pointer-coarse:opacity-100 mt-2 flex gap-1 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
+      <a href={`${href}/ask`} title={t('feed.ask')} aria-label={t('feed.ask')} className={action}>
+        <Sparkles className="size-4" />
+      </a>
+
+      <button onClick={onArchive} title={label} aria-label={label} className={action}>
+        {hidden ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />}
       </button>
-    );
-  }
+
+      <a
+        href={`https://youtu.be/${post.ytVideoId}`}
+        target="_blank"
+        rel="noreferrer"
+        title={t('feed.onYouTube')}
+        aria-label={t('feed.onYouTube')}
+        className={action}
+      >
+        <ExternalLink className="size-4" />
+      </a>
+    </div>
+  );
+}
+
+/**
+ * A number is only good or bad next to what this channel usually does, so the arrow says
+ * which side of the normal range it fell on and the tooltip names the range itself.
+ */
+function Mark({
+  value,
+  band,
+  format,
+}: {
+  value: number | null;
+  band: Band;
+  format: (value: number) => string;
+}) {
+  const { t } = useI18n();
+
+  if (value == null) return <span className="text-muted-foreground">{DASH}</span>;
+  if (!band) return <span className="tabular">{format(value)}</span>;
+
+  const above = value > band.high;
+  const below = value < band.low;
+  const Arrow = above ? MoveUp : MoveDown;
 
   return (
-    <a
-      href={href}
-      title={label}
-      aria-label={label}
-      className={className}
-      {...(external ? { target: '_blank', rel: 'noreferrer' } : {})}
+    <span
+      title={t('bench.range', { low: format(band.low), high: format(band.high) })}
+      className={cn(
+        'tabular inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-medium',
+        above && 'bg-success/12 text-success',
+        below && 'bg-destructive/12 text-destructive',
+      )}
     >
-      {body}
-    </a>
+      {format(value)}
+      {(above || below) && <Arrow className="size-3" />}
+    </span>
   );
 }
-
-function Mark({ value, tone }: { value: string; tone: string }) {
-  return (
-    <span className={cn('tabular rounded-full px-2 py-1 text-xs font-medium', tone)}>{value}</span>
-  );
-}
-
-const rank = (value: number | null, benchmark: number | null) =>
-  value == null || benchmark == null
-    ? 'text-muted-foreground'
-    : value >= benchmark
-      ? 'bg-success/12 text-success'
-      : 'bg-destructive/12 text-destructive';
 
 export const SEGMENT_STYLE: Record<string, string> = {
   superfan: 'bg-secondary text-foreground',

@@ -1,20 +1,22 @@
 import { Hono } from 'hono';
 import { deleteCookie, getCookie } from 'hono/cookie';
+import { streamSSE } from 'hono/streaming';
 import * as repo from '../db/repo.ts';
 import { isDemoChannel } from '../demo.ts';
+import { demoSource, liveState } from '../demo-refresh.ts';
 import { buildContext } from '../memory/context.ts';
-import { mindEnabled } from '../mind/client.ts';
+import { cognition, mindEnabled } from '../mind/client.ts';
 import { SESSION_COOKIE, verify } from '../session.ts';
 import { describeComment, SEGMENT_THRESHOLDS, SEGMENTS, segmentOf } from '../memory/segments.ts';
 import { resolve, suggest, type Mention } from '../memory/mentions.ts';
 import * as chat from '../db/chat.ts';
-import { ask, history, type AskContext } from '../mind/ask.ts';
+import { ask, history, type AskContext, type AskOutcome, type AskStage, type OnStage } from '../mind/ask.ts';
 import { steepestDropOffs } from '../youtube/analytics.ts';
 import { syncChannel, syncVideo } from '../youtube/sync.ts';
 import { accessTokenFor, repliesEnabled } from '../youtube/oauth.ts';
 import { replyToComment } from '../youtube/data.ts';
 import { scheduleFor } from '../mind/checkpoints.ts';
-import type { Channel, Proposal } from '../types.ts';
+import type { Channel, Proposal, Video } from '../types.ts';
 
 export const appRoutes = new Hono<{ Variables: { channel: Channel } }>();
 
@@ -42,7 +44,13 @@ appRoutes.get('/me', async (c) => {
     lastSyncAt: channel.lastSyncAt,
     syncFailing: channel.lastSyncError !== null,
     demo: isDemoChannel(channel),
+    // a screen that shows derived numbers has to be able to say so, and to say which real
+    // channel the real ones came from
+    demoSource: isDemoChannel(channel) ? await demoSource() : null,
     mindEnabled,
+    // enabled and able to think are different states, and a creator who asks a question
+    // deserves to know which one they are in before they wait two minutes for silence
+    mindCognition: cognition(),
     repliesEnabled: repliesEnabled && !isDemoChannel(channel),
     counts: await repo.counts(channel.id),
   });
@@ -60,6 +68,12 @@ appRoutes.get('/ledger', async (c) => {
 });
 
 appRoutes.get('/activity', async (c) => c.json(await repo.recentActivity(c.get('channel').id)));
+
+// what is on air right now, for the sample channel only — a connected creator's own live
+// state comes from their own OAuth sync, not from reading a page in public
+appRoutes.get('/live', async (c) =>
+  c.json(isDemoChannel(c.get('channel')) ? await liveState() : null),
+);
 
 // everything that touched this channel's memory, in order, with the unattended work marked
 appRoutes.get('/timeline', async (c) => {
@@ -187,14 +201,15 @@ appRoutes.get('/posts/:ytVideoId', async (c) => {
   });
 });
 
-appRoutes.post('/posts/:ytVideoId/ask', async (c) => {
-  const channel = c.get('channel');
-  const video = await repo.getVideo(c.req.param('ytVideoId'));
-  if (!video || video.channelId !== channel.id) return c.json({ error: 'video not found' }, 404);
-
-  const body = await c.req.json().catch(() => ({}));
-  const question = typeof body?.question === 'string' ? body.question.trim() : '';
-  if (question.length < 3) return c.json({ error: 'ask something' }, 400);
+/** Reports each step, since gathering the briefing is a noticeable part of the wait. */
+async function answerAboutVideo(
+  channel: Channel,
+  video: Video,
+  question: string,
+  mentions: Mention[],
+  onStage?: OnStage,
+): Promise<Omit<AskOutcome, 'alias'>> {
+  onStage?.({ stage: 'reading' });
 
   const [snapshot, curve, comments] = await Promise.all([
     repo.latestSnapshot(video.id),
@@ -226,8 +241,8 @@ appRoutes.post('/posts/:ytVideoId/ask', async (c) => {
     })),
   };
 
-  const mentions = readMentions(body);
   context.extra = await resolve(channel, mentions);
+  onStage?.({ stage: 'briefed', comments: context.comments.length });
 
   const thread = await chat.ensureThread({
     channelId: channel.id,
@@ -238,9 +253,41 @@ appRoutes.post('/posts/:ytVideoId/ask', async (c) => {
   });
   await chat.appendMessage(thread.id, 'creator', question, toRefs(mentions));
 
-  const answer = await ask(context, question);
+  const answer = await ask(context, question, undefined, onStage);
   if (answer.reply) await chat.appendMessage(thread.id, 'mind', answer.reply);
-  return c.json(answer);
+
+  const { alias, ...outcome } = answer;
+  void alias;
+  return outcome;
+}
+
+appRoutes.post('/posts/:ytVideoId/ask', async (c) => {
+  const channel = c.get('channel');
+  const video = await repo.getVideo(c.req.param('ytVideoId'));
+  if (!video || video.channelId !== channel.id) return c.json({ error: 'video not found' }, 404);
+
+  const body = await c.req.json().catch(() => ({}));
+  const question = typeof body?.question === 'string' ? body.question.trim() : '';
+  if (question.length < 3) return c.json({ error: 'ask something' }, 400);
+  const mentions = readMentions(body);
+
+  if (!c.req.header('accept')?.includes('text/event-stream')) {
+    return c.json(await answerAboutVideo(channel, video, question, mentions));
+  }
+
+  return streamSSE(c, async (stream) => {
+    const say = (event: string, data: unknown) =>
+      stream.writeSSE({ event, data: JSON.stringify(data) });
+
+    try {
+      const answer = await answerAboutVideo(channel, video, question, mentions, (update: AskStage) => {
+        void say('stage', update);
+      });
+      await say('done', answer);
+    } catch {
+      await say('failed', {});
+    }
+  });
 });
 
 appRoutes.get('/posts/:ytVideoId/chat', async (c) =>
@@ -358,12 +405,33 @@ appRoutes.get('/chats/search', async (c) => {
 async function storedChat(channelId: string, kind: 'video' | 'viewer', subjectId: string) {
   const thread = await chat.findThread(channelId, kind, subjectId);
   if (!thread) return [];
+
+  await catchUp(thread);
   const messages = await chat.threadMessages(thread.id);
   return messages.map((message) => ({
     role: message.role,
     text: message.body,
     at: message.createdAt,
   }));
+}
+
+/**
+ * Replies can land after the request timed out. Minds keeps them, so a thread whose last
+ * message is the creator's checks there before returning.
+ */
+async function catchUp(thread: { id: string; alias: string }): Promise<void> {
+  const stored = await chat.threadMessages(thread.id);
+  const last = stored.at(-1);
+  if (!last || last.role !== 'creator') return;
+
+  const remote = await history(thread.alias).catch(() => []);
+  const answer = remote
+    .filter((turn) => turn.role === 'mind' && new Date(turn.at) > last.createdAt)
+    .at(-1);
+
+  // an identical body already on the thread means a concurrent read got there first
+  if (!answer || stored.some((message) => message.body === answer.text)) return;
+  await chat.appendMessage(thread.id, 'mind', answer.text);
 }
 
 const toRefs = (mentions: Mention[]) => mentions.map((m) => ({ kind: m.kind, refId: m.id }));

@@ -17,6 +17,11 @@ const schema = z.object({
   MIND_ID: z.string().optional(),
   MIND_CONVERSATION_ALIAS: z.string().default('growth'),
   YOUTUBE_REPLIES: z.enum(['on', 'off']).default('on'),
+  // public reads only: comments, durations and live chat. Never the owner-only Analytics API.
+  YOUTUBE_API_KEY: z.string().min(1).optional(),
+  DEMO_SOURCE_CHANNEL: z.string().default('@HardwareHaven'),
+  // a channel that is always on air, so the live strip has something to show at any hour
+  DEMO_LIVE_CHANNEL: z.string().default('@LofiGirl'),
   DEMO_MODE: z.enum(['on', 'off']).default('off'),
   CHECKPOINT_POLL_MS: z.coerce.number().default(60_000),
 });

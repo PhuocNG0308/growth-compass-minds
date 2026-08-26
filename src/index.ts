@@ -7,7 +7,8 @@ import { appRoutes } from './routes/app.ts';
 import { authRoutes } from './routes/auth.ts';
 import { mindRoutes } from './routes/mind.ts';
 import { startCheckpointRunner } from './mind/checkpoints.ts';
-import { mindEnabled } from './mind/client.ts';
+import { startDemoRefresh } from './demo-refresh.ts';
+import { mindEnabled, refreshCognition } from './mind/client.ts';
 import { openapi } from './openapi.ts';
 import { reachableAt } from './net.ts';
 
@@ -37,7 +38,12 @@ app.onError((err, c) => {
 const hasDatabase = !unsetEnv.includes('DATABASE_URL');
 if (!hasDatabase) console.warn('  Checkpoint runner is off until DATABASE_URL is set.\n');
 
+// warmed at boot so the first page load already knows whether to warn
+if (mindEnabled) void refreshCognition();
+
 const stopRunner = hasDatabase ? startCheckpointRunner() : () => {};
+// the sample channel mirrors a real one, so it has to keep up with it
+const stopDemo = hasDatabase && demoEnabled ? startDemoRefresh() : () => {};
 const server = serve({ fetch: app.fetch, port: env.PORT, hostname: '0.0.0.0' }, ({ port }) =>
   console.log(
     ['', ...reachableAt(port).map((url) => `  ${url}`), mindEnabled ? '' : '  Mind notifications off', ''].join('\n'),
@@ -47,6 +53,7 @@ const server = serve({ fetch: app.fetch, port: env.PORT, hostname: '0.0.0.0' }, 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
     stopRunner();
+    stopDemo();
     server.close(() => void sql.end({ timeout: 5 }).then(() => process.exit(0)));
   });
 }

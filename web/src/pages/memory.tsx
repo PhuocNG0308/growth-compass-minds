@@ -49,7 +49,7 @@ export function Memory() {
   if (loading) return <Loading rows={3} />;
   if (error || !data) return <Failed onRetry={() => setRound((n) => n + 1)} />;
 
-  const { accuracy, totals } = data;
+  const { totals } = data;
   const all = [...data.events, ...older];
 
   async function loadOlder() {
@@ -70,17 +70,14 @@ export function Memory() {
 
   return (
     <>
+      {/* volume only; prediction accuracy lives with the tests that produced it */}
       <StatGrid
         stats={[
           { value: totals.sessions, label: t('memory.sessions') },
-          { value: accuracy.graded, label: t('memory.graded') },
-          { value: f.dec(accuracy.meanAbsCtrError, 2), label: t('memory.error'), lead: true },
-          { value: totals.automated, label: t('memory.automated') },
+          { value: totals.automated, label: t('memory.automated'), lead: true },
           { value: totals.tenets, label: t('memory.tenets') },
         ]}
       />
-
-      <p className="text-muted-foreground mt-4 text-[15px] text-pretty">{trend(accuracy, f, t)}</p>
 
       <SectionTitle>{t('memory.title')}</SectionTitle>
       <Chips
@@ -181,24 +178,6 @@ function Event({ event }: { event: TimelineEvent }) {
 type Fmt = ReturnType<typeof useFormat>;
 type T = ReturnType<typeof useI18n>['t'];
 
-/** The claim in words, because a row of numbers does not say whether it is working. */
-function trend(accuracy: TimelineData['accuracy'], f: Fmt, t: T): string {
-  if (accuracy.graded === 0) return t('memory.trendNone');
-  if (accuracy.recentAbsCtrError == null || accuracy.earlierAbsCtrError == null) {
-    return t('memory.trendThin', { error: f.dec(accuracy.meanAbsCtrError, 2) });
-  }
-
-  const key =
-    accuracy.recentAbsCtrError < accuracy.earlierAbsCtrError
-      ? 'memory.trendBetter'
-      : 'memory.trendWorse';
-
-  return t(key, {
-    recent: f.dec(accuracy.recentAbsCtrError, 2),
-    earlier: f.dec(accuracy.earlierAbsCtrError, 2),
-  });
-}
-
 function headline(event: TimelineEvent, f: Fmt, t: T): string {
   const detail = event.detail;
 
@@ -265,5 +244,3 @@ function group(events: TimelineEvent[]): Array<[string, TimelineEvent[]]> {
   }
   return [...days];
 }
-
-type TimelineData = Awaited<ReturnType<typeof api.timeline>>;

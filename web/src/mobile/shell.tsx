@@ -36,12 +36,15 @@ export function MobileShell({
   route,
   title,
   banner,
+  hideNav = false,
   children,
 }: {
   me: Me;
   route: string;
   title?: string;
   banner?: ReactNode;
+  /** Detail screens own the whole height — a tab bar there is a second, competing bottom. */
+  hideNav?: boolean;
   children: ReactNode;
 }) {
   const { t } = useI18n();
@@ -63,7 +66,7 @@ export function MobileShell({
 
     const publish = () => {
       for (const [name, node] of measured) {
-        if (node) document.documentElement.style.setProperty(name, `${node.offsetHeight}px`);
+        document.documentElement.style.setProperty(name, node ? `${node.offsetHeight}px` : '0px');
       }
     };
 
@@ -71,7 +74,7 @@ export function MobileShell({
     const observer = new ResizeObserver(publish);
     for (const [, node] of measured) if (node) observer.observe(node);
     return () => observer.disconnect();
-  }, [banner]);
+  }, [banner, hideNav]);
 
   async function sync() {
     setSyncing(true);
@@ -118,6 +121,7 @@ export function MobileShell({
         {children}
       </main>
 
+      {!hideNav && (
       <nav ref={tabs} className="bg-background safe-b safe-x fixed inset-x-0 bottom-0 z-30 flex border-t">
         {TABS.map(({ href, key, icon: Icon }) => {
           const active = route === href;
@@ -143,6 +147,7 @@ export function MobileShell({
           );
         })}
       </nav>
+      )}
 
       <Sheet open={menu} onOpenChange={setMenu} title={t('shell.more')}>
         <div className="space-y-6 px-4 pt-2 pb-6">

@@ -16,7 +16,17 @@ export type Me = {
   lastSyncAt: string | null;
   syncFailing: boolean;
   demo: boolean;
+  demoSource: {
+    handle: string;
+    title: string;
+    url: string;
+    /** False when no API key is set, which is when the comments are invented too. */
+    realComments: boolean;
+    modelled: string[];
+  } | null;
   mindEnabled: boolean;
+  /** Null when no Mind is configured; at or below zero it will take a question and never answer. */
+  mindCognition: number | null;
   repliesEnabled: boolean;
   counts: Counts;
 };
@@ -114,6 +124,7 @@ export type Proposal = {
   createdAt: string;
   videoTitle: string | null;
   thumbnailUrl: string | null;
+  videoPublishedAt: string | null;
 };
 
 export type Snapshot = {
@@ -284,4 +295,15 @@ export type ViewerProfileData = {
     videoTitle: string;
     thumbnailUrl: string | null;
   }>;
+};
+
+export type Live = {
+  ytVideoId: string;
+  title: string;
+  thumbnailUrl: string;
+  channel: string;
+  watching: number | null;
+  startedAt: string | null;
+  /** Null unless the server has a YouTube API key: chat is the one live field that needs one. */
+  chat: Array<{ displayName: string; text: string; at: string }> | null;
 };

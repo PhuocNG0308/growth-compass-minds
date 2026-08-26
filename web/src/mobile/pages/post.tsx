@@ -5,23 +5,13 @@ import { RetentionChart } from '@/components/retention';
 import { Trend, type TrendPoint } from '@/components/trend';
 import { Thumb } from '@/components/thumb';
 import { SegmentBadge } from '@/pages/feed';
-import {
-  Empty,
-  Failed,
-  Group,
-  Pills,
-  Sheet,
-  Skeletons,
-  StickyBar,
-  STICKY_ROOM,
-  Strip,
-  StripItem,
-} from '@/mobile/kit';
+import { Empty, Failed, Group, Sheet, Skeletons, StickyBar, STICKY_ROOM, Strip, StripItem } from '@/mobile/kit';
 import { api } from '@/lib/api';
+import { askSuggestions } from '@/lib/ask-suggestions';
 import { useFormat } from '@/lib/format';
 import { useI18n } from '@/lib/i18n';
-import { useAsync } from '@/lib/use-async';
 import { cn, focusRing } from '@/lib/utils';
+import type { Async } from '@/lib/use-async';
 import type { PostComment, PostDetail, Snapshot } from '@/lib/types';
 
 const TRIAGE = ['all', 'superfan', 'potential', 'question', 'criticism'] as const;
@@ -29,20 +19,31 @@ const METRICS = ['views', 'ctrPct', 'avgViewPct'] as const;
 const FIELD = { views: 'views', ctrPct: 'ctr', avgViewPct: 'avgViewPct' } as const;
 
 const PAGE = 12;
+const CHARTS = ['trajectory', 'retention'] as const;
 
-export function MobilePost({ ytVideoId, focusAsk }: { ytVideoId: string; focusAsk?: boolean }) {
+export function MobilePost({
+  ytVideoId,
+  focusAsk,
+  video,
+  onRetry,
+}: {
+  ytVideoId: string;
+  focusAsk?: boolean;
+  video: Async<PostDetail | null>;
+  onRetry: () => void;
+}) {
   const { t } = useI18n();
   const f = useFormat();
-  const [round, setRound] = useState(0);
   const [filter, setFilter] = useState<(typeof TRIAGE)[number]>('all');
   const [shown, setShown] = useState(PAGE);
   const [ask, setAsk] = useState(Boolean(focusAsk));
-  const { data, loading, error } = useAsync(() => api.post(ytVideoId), [ytVideoId, round]);
+  const [draft, setDraft] = useState('');
+  const [chart, setChart] = useState<(typeof CHARTS)[number]>('trajectory');
 
-  if (loading) return <Skeletons />;
-  if (error || !data) return <Failed onRetry={() => setRound((n) => n + 1)} />;
+  if (video.loading) return <Skeletons />;
+  if (video.error || !video.data) return <Failed onRetry={onRetry} />;
 
-  const { post, comments, retention, history } = data;
+  const { post, comments, retention, history } = video.data;
   const shownComments = comments.filter((comment) => keep(comment, filter));
 
   return (
@@ -69,34 +70,48 @@ export function MobilePost({ ytVideoId, focusAsk }: { ytVideoId: string; focusAs
         <p className="text-muted-foreground mt-1 text-xs">{f.longDate(post.publishedAt)}</p>
       </div>
 
-      <div className="mt-3">
-        <Pills
-          items={[
-            { label: t('metric.views'), value: f.int(post.views) },
-            { label: t('metric.ctrPct'), value: f.pct(post.ctrPct, 1) },
-            { label: t('metric.avgViewPct'), value: f.pct(post.avgViewPct) },
-            { label: t('metric.comments'), value: f.int(post.commentCount) },
-          ]}
-        />
-      </div>
+      <dl className="bg-border mt-4 grid grid-cols-2 gap-px border-y">
+        <Cell label={t('metric.views')} value={f.int(post.views)} />
+        <Cell label={t('metric.ctrPct')} value={f.pct(post.ctrPct, 1)} />
+        <Cell label={t('metric.avgViewPct')} value={f.pct(post.avgViewPct)} />
+        <Cell label={t('metric.comments')} value={f.int(post.commentCount)} />
+      </dl>
 
-      {/* two charts, one at a time, swiped — never side by side on a 390px screen */}
       <Group title={t('section.charts')}>
-        <Strip dots align="stretch">
-          <StripItem className="bg-card w-[86vw] rounded-2xl border p-4">
+        <div className="mb-3 flex gap-2 px-4">
+          {CHARTS.map((key) => (
+            <button
+              key={key}
+              onClick={() => setChart(key)}
+              aria-pressed={key === chart}
+              className={cn(
+                focusRing,
+                'min-h-11 flex-1 rounded-full border px-3 text-sm font-medium',
+                key === chart ? 'bg-foreground text-background' : 'text-muted-foreground',
+              )}
+            >
+              {t(`section.${key}`)}
+            </button>
+          ))}
+        </div>
+
+        <div className="mx-4 rounded-xl border p-4">
+          {chart === 'trajectory' ? (
             <Trajectory history={history} />
-          </StripItem>
-          <StripItem className="bg-card w-[86vw] rounded-2xl border p-4">
-            {retention ? (
-              <>
-                <p className="text-muted-foreground mb-2 text-sm">{t('section.retention')}</p>
-                <RetentionChart retention={retention} durationS={post.durationS} width={360} />
-              </>
-            ) : (
-              <Empty>{t('empty.retention')}</Empty>
-            )}
-          </StripItem>
-        </Strip>
+          ) : retention ? (
+            <RetentionChart
+              retention={retention}
+              durationS={post.durationS}
+              width={360}
+              onAsk={(question) => {
+                setDraft(question);
+                setAsk(true);
+              }}
+            />
+          ) : (
+            <Empty>{t('empty.retention')}</Empty>
+          )}
+        </div>
       </Group>
 
       <Group title={t('section.comments')}>
@@ -162,18 +177,27 @@ export function MobilePost({ ytVideoId, focusAsk }: { ytVideoId: string; focusAs
         </button>
       </StickyBar>
 
-      <Sheet open={ask} onOpenChange={setAsk} title={t('ask.title')}>
-        <div className="px-2 pb-4">
-          <AskPanel
-            subject={{
-              ask: (question, mentions) => api.ask(ytVideoId, question, mentions),
-              chat: () => api.chat(ytVideoId),
-            }}
-            suggestions={['ask.who', 'ask.why', 'ask.next']}
-            autoFocus={ask}
-          />
-        </div>
+      <Sheet open={ask} onOpenChange={setAsk} title={t('ask.title')} scroll={false}>
+        <AskPanel
+          fill
+          subject={{
+            ask: (question, mentions) => api.ask(ytVideoId, question, mentions),
+            chat: () => api.chat(ytVideoId),
+          }}
+          suggestions={askSuggestions(video.data)}
+          draft={draft}
+          autoFocus={ask}
+        />
       </Sheet>
+    </div>
+  );
+}
+
+function Cell({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="bg-background px-4 py-3">
+      <dt className="text-muted-foreground text-xs">{label}</dt>
+      <dd className="tabular mt-1 text-xl">{value}</dd>
     </div>
   );
 }

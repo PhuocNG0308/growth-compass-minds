@@ -6,7 +6,7 @@ import { DASH, useFormat } from '@/lib/format';
 import { useI18n } from '@/lib/i18n';
 import { useAsync } from '@/lib/use-async';
 import { cn, focusRing } from '@/lib/utils';
-import type { Accuracy, TimelineEvent } from '@/lib/types';
+import type { TimelineEvent } from '@/lib/types';
 
 const FILTERS = ['all', 'automated', 'learning', 'chat'] as const;
 const LEARNING = ['experiment_opened', 'experiment_closed', 'tenet_written'];
@@ -34,7 +34,7 @@ export function MobileMemory() {
   if (loading) return <Skeletons />;
   if (error || !data) return <Failed onRetry={() => setRound((n) => n + 1)} />;
 
-  const { accuracy, totals } = data;
+  const { totals } = data;
   const all = [...data.events, ...older];
   const events = all.filter((event) =>
     filter === 'learning'
@@ -54,18 +54,12 @@ export function MobileMemory() {
 
   return (
     <>
-      {/* the headline first, in words — the tiles are the evidence behind it */}
-      <p className="px-4 text-[15px] leading-relaxed text-pretty">{trend(accuracy, f, t)}</p>
-
-      <div className="mt-4">
-        <Strip snap="none">
-          <Stat value={f.dec(accuracy.meanAbsCtrError, 2)} label={t('memory.error')} tone="lead" />
-          <Stat value={totals.automated} label={t('memory.automated')} />
-          <Stat value={accuracy.graded} label={t('memory.graded')} />
-          <Stat value={totals.tenets} label={t('memory.tenets')} />
-          <Stat value={totals.sessions} label={t('memory.sessions')} />
-        </Strip>
-      </div>
+      {/* volume only; prediction accuracy lives with the tests that produced it */}
+      <Strip snap="none">
+        <Stat value={totals.automated} label={t('memory.automated')} tone="lead" />
+        <Stat value={totals.tenets} label={t('memory.tenets')} />
+        <Stat value={totals.sessions} label={t('memory.sessions')} />
+      </Strip>
 
       <Group title={t('memory.title')}>
         <Strip snap="none" className="pb-3">
@@ -169,21 +163,6 @@ function Row({ event }: { event: TimelineEvent }) {
 
 type Fmt = ReturnType<typeof useFormat>;
 type T = ReturnType<typeof useI18n>['t'];
-
-function trend(accuracy: Accuracy, f: Fmt, t: T): string {
-  if (accuracy.graded === 0) return t('memory.trendNone');
-  if (accuracy.recentAbsCtrError == null || accuracy.earlierAbsCtrError == null) {
-    return t('memory.trendThin', { error: f.dec(accuracy.meanAbsCtrError, 2) });
-  }
-  const key =
-    accuracy.recentAbsCtrError < accuracy.earlierAbsCtrError
-      ? 'memory.trendBetter'
-      : 'memory.trendWorse';
-  return t(key, {
-    recent: f.dec(accuracy.recentAbsCtrError, 2),
-    earlier: f.dec(accuracy.earlierAbsCtrError, 2),
-  });
-}
 
 function headline(event: TimelineEvent, f: Fmt, t: T): string {
   const detail = event.detail;

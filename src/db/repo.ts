@@ -216,10 +216,27 @@ export async function dueCheckpoints(now = new Date()): Promise<DueCheckpoint[]>
       join experiments e on e.id = c.experiment_id
       join channels ch on ch.id = e.channel_id
     where c.fired_at is null and c.due_at <= ${now} and e.status <> 'abandoned'
-      -- the sample channel holds no Google credentials, so driving it would hit Google with
-      -- a fake token and, worse, teach the Mind about a channel that does not exist
-      and ch.yt_channel_id <> ${DEMO_YT_CHANNEL_ID}
     order by c.due_at`;
+}
+
+/**
+ * The next checkpoint a channel has waiting, whether or not it is due. Only the demo's
+ * fast-forward uses this: the runner itself must never jump the queue.
+ */
+export async function nextCheckpoint(channelId: string): Promise<DueCheckpoint | undefined> {
+  const [row] = await sql<DueCheckpoint[]>`
+    select c.*, e.channel_id, to_jsonb(e.*) as experiment
+    from checkpoints c
+      join experiments e on e.id = c.experiment_id
+    where e.channel_id = ${channelId} and c.fired_at is null and e.status <> 'abandoned'
+    order by c.due_at
+    limit 1`;
+  return row;
+}
+
+/** Fast-forward brings a checkpoint's due date to now so the runner treats it as arrived. */
+export async function bringForward(id: string): Promise<void> {
+  await sql`update checkpoints set due_at = now() where id = ${id}`;
 }
 
 export async function markFired(id: string): Promise<void> {

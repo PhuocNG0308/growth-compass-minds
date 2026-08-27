@@ -6,6 +6,9 @@ export const DEMO_YT_CHANNEL_ID = 'UC_DEMO';
 export const isDemoChannel = (channel: { ytChannelId: string }) =>
   channel.ytChannelId === DEMO_YT_CHANNEL_ID;
 
+/** Stored where a real refresh token would be, so `syncable()` can tell the two apart. */
+export const DEMO_REFRESH_TOKEN = 'demo-channel-has-no-google-token';
+
 /**
  * Impressions, click-through and retention are owner-only, so they are derived here from the
  * counts that are public.

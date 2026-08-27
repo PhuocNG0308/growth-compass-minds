@@ -2,7 +2,7 @@ import { sql } from '../src/db/client.ts';
 import * as chat from '../src/db/chat.ts';
 import * as repo from '../src/db/repo.ts';
 import { encrypt } from '../src/crypto.ts';
-import { DEMO_YT_CHANNEL_ID } from '../src/demo.ts';
+import { DEMO_REFRESH_TOKEN, DEMO_YT_CHANNEL_ID } from '../src/demo.ts';
 import { env } from '../src/env.ts';
 import { pullPublicChannel, resolveSource } from '../src/youtube/public-sync.ts';
 
@@ -106,7 +106,7 @@ async function main() {
   const channel = await repo.upsertChannel({
     ytChannelId: DEMO_YT_CHANNEL_ID,
     title: source.title,
-    refreshToken: encrypt('demo-channel-has-no-google-token'),
+    refreshToken: encrypt(DEMO_REFRESH_TOKEN),
   });
   await repo.setReachSyncedThrough(channel.id, new Date(NOW - 2 * 24 * HOUR).toISOString().slice(0, 10));
 

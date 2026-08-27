@@ -1,6 +1,7 @@
 import * as repo from '../db/repo.ts';
 import { env } from '../env.ts';
 import { steepestDropOffs } from '../youtube/analytics.ts';
+import { syncable } from '../youtube/oauth.ts';
 import { syncVideo } from '../youtube/sync.ts';
 import { CHECKPOINT_OFFSETS_H, type CheckpointKind, type ProposalKind } from '../types.ts';
 import { notifyMind } from './client.ts';
@@ -12,7 +13,7 @@ export function scheduleFor(publishedAt: Date): Array<{ kind: CheckpointKind; du
   }));
 }
 
-async function fire(checkpoint: repo.DueCheckpoint): Promise<void> {
+export async function fire(checkpoint: repo.DueCheckpoint): Promise<void> {
   const channel = await repo.getChannel(checkpoint.channelId);
   if (!channel) return;
 
@@ -20,7 +21,9 @@ async function fire(checkpoint: repo.DueCheckpoint): Promise<void> {
   const video = experiment.videoId ? await repo.getVideoById(experiment.videoId) : undefined;
 
   let staleSince: Date | null = null;
-  if (video) {
+  // a connected channel is always refreshed first; the sample one has no Google credentials
+  // to refresh with, and its numbers are already kept current by the public refresher
+  if (video && syncable(channel)) {
     await syncVideo(channel, video.ytVideoId).catch((err) => {
       console.error('[sync]', err);
       staleSince = channel.lastSyncAt;

@@ -109,6 +109,13 @@ export const api = {
   activity: () => get<Activity[]>('/api/activity'),
   // null when nothing is on air, which is most of the time — not an error
   live: () => get<Live | null>('/api/live').catch(() => null),
+  fastForward: async () => {
+    const res = await fetch('/api/demo/fast-forward', { method: 'POST' });
+    if (!res.ok) throw new Error('fast-forward failed');
+    return res.json() as Promise<{
+      fired: { kind: string; videoTitle: string | null; hypothesis: string } | null;
+    }>;
+  },
   timeline: (automatedOnly = false, before?: string) =>
     get<Timeline>(
       `/api/timeline?limit=60${automatedOnly ? '&automated=1' : ''}` +

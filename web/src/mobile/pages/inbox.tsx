@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { Check, TriangleAlert, X } from 'lucide-react';
 import { ReactionWindow, useDecide, type Decide } from '@/components/proposals';
-import { Thumb } from '@/components/thumb';
 import {
   Disclosure,
   Empty,
@@ -112,9 +111,8 @@ export function MobileInbox({ me }: { me: Me }) {
 }
 
 /**
- * The desktop card stacks summary, detail, rationale and every concept vertically. Here the
- * rationale folds away, and the concepts become a swipe: comparing three numbers is exactly
- * what a horizontal strip is for.
+ * Summary first: type, video, the change and what it commits to. Rationale and the other
+ * concepts fold away, so a queue of four fits a phone screen instead of one card filling it.
  */
 function ProposalCard({ proposal, onDecide }: { proposal: Proposal; onDecide: Decide }) {
   const { t } = useI18n();
@@ -125,9 +123,11 @@ function ProposalCard({ proposal, onDecide }: { proposal: Proposal; onDecide: De
   const decide = (status: 'approved' | 'dismissed') =>
     onDecide(proposal.id, status, choice ?? undefined);
 
+  const picked = concepts.find((concept) => concept.label === choice);
+
   return (
     <article className="bg-card overflow-hidden rounded-2xl border">
-      <div className="flex items-center gap-2 px-4 pt-4">
+      <div className="flex flex-wrap items-center gap-2 px-4 pt-4">
         <span className="bg-primary/15 text-primary rounded-full px-3 py-1 text-xs font-semibold">
           {t(`proposal.${proposal.kind}`)}
         </span>
@@ -135,45 +135,50 @@ function ProposalCard({ proposal, onDecide }: { proposal: Proposal; onDecide: De
         <span className="text-muted-foreground text-xs">{f.since(proposal.createdAt)}</span>
       </div>
 
-      <h3 className="mt-2 px-4 leading-snug font-medium text-pretty">{proposal.summary}</h3>
-
       {proposal.videoTitle && (
-        <div className="mt-3 flex items-center gap-3 px-4">
-          <Thumb url={proposal.thumbnailUrl} title={proposal.videoTitle} className="w-20 shrink-0" />
-          <span className="text-muted-foreground line-clamp-2 text-xs">{proposal.videoTitle}</span>
-        </div>
+        <p className="text-muted-foreground mt-2 truncate px-4 text-xs">{proposal.videoTitle}</p>
       )}
 
-      <p className="bg-muted mx-4 mt-3 rounded-xl px-4 py-3 text-[15px] leading-relaxed text-pretty">
-        {proposal.detail}
-      </p>
+      <h3 className="mt-1 px-4 leading-snug font-medium text-pretty">{proposal.summary}</h3>
+      <p className="text-muted-foreground mt-1 px-4 text-sm text-pretty">{proposal.detail}</p>
+
+      {picked && (
+        <p className="mt-2 flex flex-wrap items-center gap-x-3 px-4 text-xs">
+          <span className="text-muted-foreground">{t('proposal.commits')}</span>
+          {Object.entries(picked.prediction).map(([metric, value]) => (
+            <span key={metric} className="tabular text-primary font-semibold">
+              {f.metricValue(metric, value)} {f.metric(metric)}
+            </span>
+          ))}
+        </p>
+      )}
 
       <div className="px-4">
-        <Disclosure label={t('proposal.why')} openLabel={t('proposal.hideWhy')}>
+        <Disclosure label={t('proposal.showDetail')} openLabel={t('proposal.hideDetail')}>
           <p className="text-muted-foreground text-sm text-pretty">{proposal.rationale}</p>
+
+          {concepts.length > 0 && (
+            <>
+              <p className="text-muted-foreground mt-3 text-xs font-semibold tracking-wide uppercase">
+                {t('proposal.pick')}
+              </p>
+              <Strip dots align="stretch" className="mt-2">
+                {concepts.map((concept) => (
+                  <StripItem key={concept.label} className="w-64">
+                    <ConceptCard
+                      concept={concept}
+                      selected={concept.label === choice}
+                      onSelect={() => setChoice(concept.label)}
+                    />
+                  </StripItem>
+                ))}
+              </Strip>
+            </>
+          )}
         </Disclosure>
       </div>
 
-      {concepts.length > 0 && (
-        <>
-          <p className="text-muted-foreground mt-2 px-4 text-xs font-semibold tracking-wide uppercase">
-            {t('proposal.pick')}
-          </p>
-          <Strip dots align="stretch" className="mt-2">
-            {concepts.map((concept) => (
-              <StripItem key={concept.label} className="w-64">
-                <ConceptCard
-                  concept={concept}
-                  selected={concept.label === choice}
-                  onSelect={() => setChoice(concept.label)}
-                />
-              </StripItem>
-            ))}
-          </Strip>
-        </>
-      )}
-
-      <div className="mt-4 grid grid-cols-[1fr_auto] gap-2 border-t p-3">
+      <div className="mt-3 grid grid-cols-[1fr_auto] gap-2 border-t p-3">
         <button
           onClick={() => decide('approved')}
           className={cn(

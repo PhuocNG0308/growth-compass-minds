@@ -177,11 +177,11 @@ export function MobilePost({
         </button>
       </StickyBar>
 
-      <Sheet open={ask} onOpenChange={setAsk} title={t('ask.title')} scroll={false}>
+      <Sheet open={ask} onOpenChange={setAsk} title={t('ask.title')} scroll={false} snap>
         <AskPanel
           fill
           subject={{
-            ask: (question, mentions) => api.ask(ytVideoId, question, mentions),
+            ask: (question, mentions, onStage) => api.ask(ytVideoId, question, mentions, onStage),
             chat: () => api.chat(ytVideoId),
           }}
           suggestions={askSuggestions(video.data)}

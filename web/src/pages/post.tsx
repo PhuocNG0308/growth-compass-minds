@@ -1,6 +1,6 @@
 import { useId, useState } from 'react';
 import { AskPanel } from '@/components/ask-panel';
-import { SidePanel } from '@/components/side-panel';
+import { X } from 'lucide-react';
 import { Chips, Empty, Failed, List, Loading, Modelled, SectionTitle } from '@/components/shell';
 import { RetentionChart } from '@/components/retention';
 import { Crumbs, postHref, type PostSection } from '@/components/video-nav';
@@ -52,48 +52,56 @@ export function Post({
   const [filter, setFilter] = useState<Filter>('all');
   const [draft, setDraft] = useState('');
   const [moment, setMoment] = useState<number | null>(null);
+  const [hovered, setHovered] = useState<number | null>(null);
 
   if (video.loading) return <Loading rows={3} />;
   if (video.error || !video.data) return <Failed onRetry={onRetry} />;
 
   const { post, comments, retention, history } = video.data;
   const shown = comments.filter((comment) => keep(comment, filter));
+  const asking = section === 'ask';
 
-  return (
-    <>
-      <Crumbs title={post.title} section={behind} />
-      <h1 className="mb-6 text-2xl font-normal tracking-tight">{t(`section.${behind}`)}</h1>
+  const panel = (
+    // its own scroll and its own height: the numbers beside it must not move while you read
+    <aside className="sticky top-0 flex h-[calc(100dvh-11rem)] min-w-0 flex-col overflow-hidden rounded-xl border">
+      <div className="flex shrink-0 items-center gap-3 border-b px-4 py-3">
+        <h2 className="flex-1 truncate font-medium">{t('ask.title')}</h2>
+        <a
+          href={postHref(ytVideoId)}
+          aria-label={t('reply.cancel')}
+          className={cn(focusRing, 'hover:bg-accent grid size-9 place-items-center rounded-full')}
+        >
+          <X className="size-5" />
+        </a>
+      </div>
 
-      <SidePanel
-        open={section === 'ask'}
-        onOpenChange={(open) => {
-          if (!open) location.hash = postHref(ytVideoId);
+      <AskPanel
+        fill
+        subject={{
+          ask: (question, mentions, onStage) => api.ask(ytVideoId, question, mentions, onStage),
+          chat: () => api.chat(ytVideoId),
         }}
-        title={t('ask.title')}
-      >
-        <AskPanel
-          fill
-          subject={{
-            ask: (question, mentions, onStage) => api.ask(ytVideoId, question, mentions, onStage),
-            chat: () => api.chat(ytVideoId),
-          }}
-          suggestions={askSuggestions(video.data)}
-          draft={draft}
-          sources={{
-            // the same slice, in the same order, that the ask route briefs the Mind with:
-            // both read `commentsForVideo`, so [c3] means the third of these
-            comments: comments.slice(0, BRIEFED),
-            at: (ratio) =>
-              post.durationS ? f.clock(ratio * post.durationS) : `${Math.round(ratio * 100)}%`,
-            onSeek: (ratio) => {
-              setMoment(ratio);
-              location.hash = postHref(ytVideoId, 'retention');
-            },
-          }}
-          autoFocus
-        />
-      </SidePanel>
+        suggestions={askSuggestions(video.data)}
+        draft={draft}
+        highlight={hovered}
+        sources={{
+          // the same slice, in the same order, that the ask route briefs the Mind with:
+          // both read `commentsForVideo`, so [c3] means the third of these
+          comments: comments.slice(0, BRIEFED),
+          at: (ratio) =>
+            post.durationS ? f.clock(ratio * post.durationS) : `${Math.round(ratio * 100)}%`,
+          onSeek: (ratio) => {
+            setMoment(ratio);
+            location.hash = postHref(ytVideoId, 'retention');
+          },
+        }}
+        autoFocus
+      />
+    </aside>
+  );
 
+  const body = (
+    <>
       {behind === 'analytics' && (
         <>
           <dl className="bg-border grid grid-cols-2 gap-px overflow-hidden rounded-xl border @md:grid-cols-4">
@@ -116,6 +124,7 @@ export function Post({
             durationS={post.durationS}
             demo={demo}
             focus={moment}
+            onCursor={setHovered}
             onAsk={(question) => {
               setDraft(question);
               location.hash = postHref(ytVideoId, 'ask');
@@ -150,6 +159,23 @@ export function Post({
       )}
     </>
   );
+
+  return (
+    <>
+      <Crumbs title={post.title} section={behind} />
+      <h1 className="mb-6 text-2xl font-normal tracking-tight">{t(`section.${behind}`)}</h1>
+
+      {/* asking is a conversation held against the numbers, so the numbers stay on screen */}
+      {asking ? (
+        <div className="grid gap-6 @3xl:grid-cols-[3fr_2fr]">
+          <div className="min-w-0">{body}</div>
+          {panel}
+        </div>
+      ) : (
+        body
+      )}
+    </>
+  );
 }
 
 /**
@@ -163,6 +189,7 @@ function Retention({
   durationS,
   demo,
   focus,
+  onCursor,
   onAsk,
 }: {
   ytVideoId: string;
@@ -170,6 +197,7 @@ function Retention({
   durationS: number | null;
   demo: boolean;
   focus: number | null;
+  onCursor: (ratio: number | null) => void;
   onAsk: (question: string) => void;
 }) {
   const { t } = useI18n();
@@ -223,6 +251,7 @@ function Retention({
           durationS={durationS}
           compare={compare}
           focus={focus}
+          onCursor={onCursor}
           onAsk={onAsk}
         />
       </div>

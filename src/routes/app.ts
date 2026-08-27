@@ -15,7 +15,7 @@ import { steepestDropOffs } from '../youtube/analytics.ts';
 import { syncChannel, syncVideo } from '../youtube/sync.ts';
 import { accessTokenFor, repliesEnabled } from '../youtube/oauth.ts';
 import { replyToComment } from '../youtube/data.ts';
-import { scheduleFor } from '../mind/checkpoints.ts';
+import { fire, scheduleFor } from '../mind/checkpoints.ts';
 import type { Channel, Proposal, Video } from '../types.ts';
 
 export const appRoutes = new Hono<{ Variables: { channel: Channel } }>();
@@ -74,6 +74,35 @@ appRoutes.get('/activity', async (c) => c.json(await repo.recentActivity(c.get('
 appRoutes.get('/live', async (c) =>
   c.json(isDemoChannel(c.get('channel')) ? await liveState() : null),
 );
+
+/**
+ * The autonomous loop runs on YouTube's clock: 24h, 72h, 7d, 28d after publication. Nobody
+ * evaluating this has 24 hours, so on the sample channel the next checkpoint can be brought
+ * forward and fired now. It is the same code path the runner uses — the only thing skipped
+ * is the wait.
+ */
+appRoutes.post('/demo/fast-forward', async (c) => {
+  const channel = c.get('channel');
+  if (!isDemoChannel(channel)) return c.json({ error: 'sample channel only' }, 403);
+
+  const checkpoint = await repo.nextCheckpoint(channel.id);
+  if (!checkpoint) return c.json({ fired: null });
+
+  await repo.bringForward(checkpoint.id);
+  await fire({ ...checkpoint, dueAt: new Date() });
+
+  const video = checkpoint.experiment.videoId
+    ? await repo.getVideoById(checkpoint.experiment.videoId)
+    : undefined;
+
+  return c.json({
+    fired: {
+      kind: checkpoint.kind,
+      videoTitle: video?.title ?? null,
+      hypothesis: checkpoint.experiment.hypothesis,
+    },
+  });
+});
 
 // everything that touched this channel's memory, in order, with the unattended work marked
 appRoutes.get('/timeline', async (c) => {

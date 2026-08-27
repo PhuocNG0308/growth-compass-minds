@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { Dialog as DialogPrimitive } from 'radix-ui';
 import { ChevronDown, X } from 'lucide-react';
 import { Strip, StripItem } from '@/mobile/strip';
@@ -154,6 +154,9 @@ export function Fold({
  * Bottom sheet. Anything that would be a dialog on desktop arrives from the bottom edge
  * here, where the thumb already is.
  */
+/** Peek, half, full — as a share of the viewport height. */
+const SNAPS = [38, 64, 92];
+
 export function Sheet({
   open,
   onOpenChange,
@@ -161,6 +164,7 @@ export function Sheet({
   children,
   footer,
   scroll = true,
+  snap = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -169,20 +173,68 @@ export function Sheet({
   footer?: ReactNode;
   /** Off when the content scrolls itself and needs to pin something to the bottom edge. */
   scroll?: boolean;
+  /**
+   * Three heights instead of one, and no overlay: what is behind the sheet stays readable and
+   * usable. For a sheet that has to be answered, leave this off.
+   */
+  snap?: boolean;
 }) {
   const { t } = useI18n();
+  const [stop, setStop] = useState(1);
+  const [dragged, setDragged] = useState<number | null>(null);
+  const drag = useRef<{ y: number; from: number; moved: boolean } | null>(null);
+
+  const height = dragged ?? SNAPS[stop]!;
+
+  const grip = snap
+    ? {
+        onPointerDown: (event: React.PointerEvent) => {
+          event.currentTarget.setPointerCapture(event.pointerId);
+          drag.current = { y: event.clientY, from: height, moved: false };
+        },
+        onPointerMove: (event: React.PointerEvent) => {
+          const from = drag.current;
+          if (!from) return;
+          const delta = ((from.y - event.clientY) / window.innerHeight) * 100;
+          if (Math.abs(delta) > 1) from.moved = true;
+          setDragged(Math.min(Math.max(from.from + delta, 20), 96));
+        },
+        onPointerUp: () => {
+          const from = drag.current;
+          drag.current = null;
+          if (!from) return;
+          // a tap is a request for more room; a drag lands on whichever stop is nearest
+          if (!from.moved) setStop((at) => (at + 1) % SNAPS.length);
+          else {
+            const nearest = SNAPS.reduce(
+              (best, value, index) =>
+                Math.abs(value - height) < Math.abs(SNAPS[best]! - height) ? index : best,
+              0,
+            );
+            setStop(nearest);
+          }
+          setDragged(null);
+        },
+      }
+    : {};
 
   return (
-    <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
+    <DialogPrimitive.Root open={open} onOpenChange={onOpenChange} modal={!snap}>
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="fade-in fixed inset-0 z-40 bg-black/50" />
+        {!snap && <DialogPrimitive.Overlay className="fade-in fixed inset-0 z-40 bg-black/50" />}
         <DialogPrimitive.Content
+          onInteractOutside={(event) => snap && event.preventDefault()}
+          style={snap ? { height: `${height}dvh` } : undefined}
           className={cn(
-            'sheet-in bg-card safe-b fixed inset-x-0 bottom-0 z-50 flex max-h-[88dvh] flex-col',
+            'sheet-in bg-card safe-b fixed inset-x-0 bottom-0 z-50 flex flex-col',
             'rounded-t-3xl border-t shadow-2xl outline-none',
+            !snap && 'max-h-[88dvh]',
           )}
         >
-          <div className="flex items-center gap-3 px-4 pt-3 pb-2">
+          <div
+            {...grip}
+            className={cn('flex items-center gap-3 px-4 pt-3 pb-2', snap && 'cursor-grab touch-none')}
+          >
             <span className="bg-border absolute inset-x-0 top-2 mx-auto h-1 w-10 rounded-full" />
             <DialogPrimitive.Title className="mt-3 flex-1 text-base font-semibold">
               {title}

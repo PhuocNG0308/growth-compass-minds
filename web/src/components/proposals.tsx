@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { Check, Clock, TriangleAlert, X } from 'lucide-react';
+import { Check, ChevronDown, Clock, TriangleAlert, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -173,6 +173,7 @@ function ProposalRow({
   const [choice, setChoice] = useState<string | null>(
     concepts[0]?.label ?? proposal.options[0] ?? null,
   );
+  const [open, setOpen] = useState(false);
 
   const decide = (status: 'approved' | 'dismissed') =>
     onDecide(proposal.id, status, choice ?? undefined);
@@ -182,14 +183,17 @@ function ProposalRow({
     k: () => onMove(-1),
     a: () => decide('approved'),
     x: () => decide('dismissed'),
+    d: () => setOpen((on) => !on),
   };
+
+  const picked = concepts.find((concept) => concept.label === choice);
 
   return (
     <div
       ref={bind}
       // one tab stop for the queue; j/k move within it
       tabIndex={first ? 0 : -1}
-      aria-keyshortcuts="j k a x"
+      aria-keyshortcuts="j k a x d"
       onKeyDown={(event) => {
         // the card only owns the keys while nothing inside it does
         if (event.target !== event.currentTarget) return;
@@ -198,80 +202,136 @@ function ProposalRow({
         event.preventDefault();
         act();
       }}
-      className={cn(
-        focusRing,
-        'flex flex-col gap-4 border-b p-5 last:border-b-0 sm:flex-row',
-      )}
+      className={cn(focusRing, 'border-b p-4 last:border-b-0')}
     >
-      {proposal.videoTitle && (
-        <Thumb url={proposal.thumbnailUrl} title={proposal.videoTitle} className="w-full self-start sm:w-40" />
-      )}
-
-      <div className="min-w-0 flex-1">
-        <div className="mb-2 flex flex-wrap items-center gap-2">
-          <Badge variant="secondary" className="bg-primary/20 text-primary">
-            {t(`proposal.${proposal.kind}`)}
-          </Badge>
-          <ReactionWindow proposal={proposal} />
-          <span className="text-xs text-muted-foreground">{f.since(proposal.createdAt)}</span>
-        </div>
-
-        <p className="text-lg leading-snug font-medium">{proposal.summary}</p>
-        <p className="bg-muted mt-3 rounded-lg px-4 py-3 text-[15px] leading-relaxed">{proposal.detail}</p>
-        <p className="mt-3 text-sm text-muted-foreground">{proposal.rationale}</p>
-
-        {concepts.length > 0 ? (
-          <fieldset className="mt-4">
-            <legend className="text-muted-foreground mb-2 text-xs font-semibold tracking-wide uppercase">
-              {t('proposal.pick')}
-            </legend>
-            <div className="divide-y border-y">
-              {concepts.map((concept) => (
-                <ConceptRow
-                  key={concept.label}
-                  concept={concept}
-                  name={proposal.id}
-                  selected={concept.label === choice}
-                  onSelect={() => setChoice(concept.label)}
-                />
-              ))}
-            </div>
-          </fieldset>
-        ) : (
-          proposal.options.length > 0 && (
-            <div className="mt-3 flex flex-wrap gap-2">
-              {proposal.options.map((option) => (
-                <button
-                  key={option}
-                  onClick={() => setChoice(option)}
-                  aria-pressed={option === choice}
-                  className={cn(
-                    focusRing,
-                    'rounded-lg border px-3 py-2 text-sm',
-                    option === choice
-                      ? 'bg-foreground text-background'
-                      : 'text-muted-foreground hover:text-foreground',
-                  )}
-                >
-                  {option}
-                </button>
-              ))}
-            </div>
-          )
+      <div className="flex gap-3">
+        {proposal.videoTitle && (
+          <Thumb
+            url={proposal.thumbnailUrl}
+            title={proposal.videoTitle}
+            className="hidden w-20 shrink-0 self-start @md:block"
+          />
         )}
 
-        <div className="mt-4 flex gap-2">
-          <Button size="sm" onClick={() => decide('approved')}>
-            <Check />
-            {t(concepts.length > 0 ? 'proposal.commit' : 'proposal.approve')}
-          </Button>
-          <Button size="sm" variant="ghost" onClick={() => decide('dismissed')}>
-            <X />
-            {t('proposal.dismiss')}
-          </Button>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start gap-3">
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+              <Badge variant="secondary" className="bg-primary/20 text-primary">
+                {t(`proposal.${proposal.kind}`)}
+              </Badge>
+              <ReactionWindow proposal={proposal} />
+              {proposal.videoTitle && (
+                <span className="text-muted-foreground min-w-0 truncate text-xs">
+                  {proposal.videoTitle}
+                </span>
+              )}
+              <span className="text-muted-foreground text-xs">{f.since(proposal.createdAt)}</span>
+            </div>
+
+            {/* the decision is the point of the card, so it sits where the eye lands first */}
+            <div className="flex shrink-0 gap-1">
+              <Button size="sm" onClick={() => decide('approved')}>
+                <Check />
+                {t(concepts.length > 0 ? 'proposal.commit' : 'proposal.approve')}
+              </Button>
+              <Button
+                size="icon"
+                variant="ghost"
+                aria-label={t('proposal.dismiss')}
+                title={t('proposal.dismiss')}
+                onClick={() => decide('dismissed')}
+              >
+                <X />
+              </Button>
+            </div>
+          </div>
+
+          <p className="mt-2 leading-snug font-medium text-pretty">{proposal.summary}</p>
+
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+            <span className="text-muted-foreground truncate">{proposal.detail}</span>
+            {picked && <Commitment prediction={picked.prediction} />}
+          </div>
+
+          <button
+            onClick={() => setOpen((on) => !on)}
+            aria-expanded={open}
+            className={cn(
+              focusRing,
+              'text-muted-foreground hover:text-foreground mt-2 inline-flex items-center gap-1 rounded-md text-xs font-medium',
+            )}
+          >
+            {t(open ? 'proposal.hideDetail' : 'proposal.showDetail')}
+            <ChevronDown className={cn('size-3 transition-transform', open && 'rotate-180')} />
+          </button>
+
+          {open && (
+            <div className="mt-3">
+              <p className="text-muted-foreground text-sm text-pretty">{proposal.rationale}</p>
+
+              {concepts.length > 0 ? (
+                <fieldset className="mt-3">
+                  <legend className="text-muted-foreground mb-2 text-xs font-semibold tracking-wide uppercase">
+                    {t('proposal.pick')}
+                  </legend>
+                  <div className="divide-y border-y">
+                    {concepts.map((concept) => (
+                      <ConceptRow
+                        key={concept.label}
+                        concept={concept}
+                        name={proposal.id}
+                        selected={concept.label === choice}
+                        onSelect={() => setChoice(concept.label)}
+                      />
+                    ))}
+                  </div>
+                </fieldset>
+              ) : (
+                proposal.options.length > 0 && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {proposal.options.map((option) => (
+                      <button
+                        key={option}
+                        onClick={() => setChoice(option)}
+                        aria-pressed={option === choice}
+                        className={cn(
+                          focusRing,
+                          'rounded-lg border px-3 py-2 text-sm',
+                          option === choice
+                            ? 'bg-foreground text-background'
+                            : 'text-muted-foreground hover:text-foreground',
+                        )}
+                      >
+                        {option}
+                      </button>
+                    ))}
+                  </div>
+                )
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
+  );
+}
+
+/** The number the chosen concept is committed to, inline, so approving is not a blind click. */
+function Commitment({ prediction }: { prediction: Concept['prediction'] }) {
+  const { t } = useI18n();
+  const f = useFormat();
+  const entries = Object.entries(prediction);
+  if (entries.length === 0) return null;
+
+  return (
+    <span className="text-muted-foreground flex shrink-0 flex-wrap items-center gap-x-3 text-xs">
+      <span>{t('proposal.commits')}</span>
+      {entries.map(([metric, value]) => (
+        <span key={metric} className="tabular text-primary font-semibold">
+          {f.metricValue(metric, value)} {f.metric(metric)}
+        </span>
+      ))}
+    </span>
   );
 }
 
@@ -298,7 +358,7 @@ function ConceptRow({
   return (
     <label
       className={cn(
-        'flex cursor-pointer gap-3 p-4 transition-colors',
+        'flex cursor-pointer gap-3 p-3 transition-colors',
         selected ? 'bg-primary/8' : 'hover:bg-accent',
       )}
     >

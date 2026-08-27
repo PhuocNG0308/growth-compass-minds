@@ -1,4 +1,5 @@
-import { env } from '../env.ts';
+import { DEMO_REFRESH_TOKEN } from '../demo.ts';
+import { env, googleConfigured } from '../env.ts';
 import { decrypt } from '../crypto.ts';
 import type { Channel } from '../types.ts';
 
@@ -59,6 +60,15 @@ export async function exchangeCode(code: string): Promise<{ accessToken: string;
 }
 
 const cache = new Map<string, { token: string; expiresAt: number }>();
+
+/**
+ * Whether this channel can be read from Google at all. A channel connected through OAuth
+ * always can, and always should be — this is only ever false for one seeded without a real
+ * refresh token, which is the sample channel. Its numbers come from the public refresher.
+ */
+export function syncable(channel: Channel): boolean {
+  return googleConfigured && decrypt(channel.refreshToken) !== DEMO_REFRESH_TOKEN;
+}
 
 export async function accessTokenFor(channel: Channel): Promise<string> {
   const hit = cache.get(channel.id);

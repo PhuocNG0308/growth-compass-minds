@@ -33,6 +33,7 @@ export function AskPanel({
   suggestions,
   draft,
   sources,
+  highlight,
   title = 'ask.title',
   autoFocus = false,
   fill = false,
@@ -47,6 +48,8 @@ export function AskPanel({
   draft?: string;
   /** What the Mind can cite. Without it, citations are dropped rather than shown raw. */
   sources?: Sources;
+  /** A moment the reader is pointing at elsewhere; citations of it are marked. */
+  highlight?: number | null;
   title?: string;
   autoFocus?: boolean;
   /** Fill the host surface — a drawer or a sheet — and keep the composer off the scroll. */
@@ -135,7 +138,7 @@ export function AskPanel({
             {turn.text}
           </div>
         ) : (
-          <MindTurn key={i} text={turn.text} sources={sources} />
+          <MindTurn key={i} text={turn.text} sources={sources} highlight={highlight} />
         ),
       )}
       {busy && (
@@ -217,12 +220,22 @@ export function AskPanel({
 }
 
 const CITED = /\[c(\d+)\]|\[t=([\d.]+)\]/g;
+// one retention sample either side, so pointing near a cited moment still lights it
+const NEARBY = 0.03;
 
 /**
  * The Mind tags the comment or timestamp behind a claim. These resolve the tag: the comment
  * quoted below the answer, or that second on the retention curve.
  */
-function MindTurn({ text, sources }: { text: string; sources?: Sources }) {
+function MindTurn({
+  text,
+  sources,
+  highlight,
+}: {
+  text: string;
+  sources?: Sources;
+  highlight?: number | null;
+}) {
   const { t } = useI18n();
   const [quoted, setQuoted] = useState<PostComment | null>(null);
 
@@ -256,12 +269,14 @@ function MindTurn({ text, sources }: { text: string; sources?: Sources }) {
 
     if (ratio && sources) {
       const at = Number(ratio);
+      // the same second the pointer is on in the chart beside this
+      const lit = highlight != null && Math.abs(at - highlight) < NEARBY;
       parts.push(
         <button
           key={`${found.index}`}
           onClick={() => sources.onSeek(at)}
           title={t('ask.seeMoment')}
-          className={badge}
+          className={cn(badge, lit && 'border-foreground text-foreground bg-accent')}
         >
           <ChartSpline className="size-3" />
           {sources.at(at)}

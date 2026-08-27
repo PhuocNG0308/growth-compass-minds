@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { FlaskConical, TriangleAlert, X } from 'lucide-react';
+import { FastForward, FlaskConical, TriangleAlert, X } from 'lucide-react';
 import { Rail } from '@/components/rail';
 import { Shell } from '@/components/shell';
 import { VideoNav, type PostSection } from '@/components/video-nav';
@@ -23,6 +23,7 @@ import { MobileTests } from '@/mobile/pages/tests';
 import { useIsMobile } from '@/mobile/use-mobile';
 import { api, NotConnected } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
+import { useToast } from '@/components/toast';
 import { useAsync, useHash, type Async } from '@/lib/use-async';
 import { cn, focusRing } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -242,6 +243,9 @@ function Banners({ me }: { me: Me }) {
 
 const TOP_UP_URL = 'https://hellominds.ai/profile?tab=account';
 
+/** Both banners are one line: on a phone they sit above every screen in the app. */
+const bannerRow = 'flex h-9 items-center justify-center gap-2 px-4 text-xs font-medium';
+
 /**
  * A Mind at or below zero cognition answers slowly or not at all. Without this the only
  * symptom is a question that never comes back, which reads as a broken app.
@@ -251,14 +255,17 @@ function CognitionBanner({ me }: { me: Me }) {
   if (!me.mindEnabled || me.mindCognition == null || me.mindCognition > 0) return null;
 
   return (
-    <div className="border-warning/40 bg-warning/15 text-warning flex flex-wrap items-center justify-center gap-x-3 gap-y-1 border-b px-4 py-2 text-center text-xs font-medium">
+    <div className={cn(bannerRow, 'border-warning/40 bg-warning/15 text-warning border-b')}>
       <TriangleAlert className="size-4 shrink-0" />
-      <span>{t('mind.noCognition')}</span>
+      <span className="truncate">
+        <span className="hidden sm:inline">{t('mind.noCognition')}</span>
+        <span className="sm:hidden">{t('mind.noCognitionShort')}</span>
+      </span>
       <a
         href={TOP_UP_URL}
         target="_blank"
         rel="noreferrer"
-        className={cn(focusRing, 'rounded-md underline underline-offset-2')}
+        className={cn(focusRing, 'shrink-0 rounded-md underline underline-offset-2')}
       >
         {t('mind.topUp')}
       </a>
@@ -276,26 +283,66 @@ function DemoBanner({ me }: { me: Me }) {
   const source = me.demoSource;
 
   return (
-    <div className="bg-warning/15 text-warning flex flex-wrap items-center justify-center gap-x-2 gap-y-1 px-4 py-2 text-center text-xs font-medium">
+    <div className={cn(bannerRow, 'bg-warning/15 text-warning')}>
       <FlaskConical className="size-4 shrink-0" />
       {source ? (
-        <>
-          <span>
+        <span className="truncate">
+          <span className="hidden sm:inline">
             {t(source.realComments ? 'demo.fromLive' : 'demo.fromFeed')}{' '}
-            <a
-              href={source.url}
-              target="_blank"
-              rel="noreferrer"
-              className={cn(focusRing, 'rounded-md underline underline-offset-2')}
-            >
-              {source.title}
-            </a>
           </span>
-          <span className="opacity-80">{t('demo.modelled')}</span>
-        </>
+          <span className="sm:hidden">{t('demo.short')} </span>
+          <a
+            href={source.url}
+            target="_blank"
+            rel="noreferrer"
+            className={cn(focusRing, 'rounded-md underline underline-offset-2')}
+          >
+            {source.title}
+          </a>
+          <span className="hidden opacity-80 sm:inline"> {t('demo.modelled')}</span>
+        </span>
       ) : (
-        t('demo.banner')
+        <span className="truncate">{t('demo.banner')}</span>
       )}
+
+      <FastForwardButton />
     </div>
+  );
+}
+
+/**
+ * A checkpoint is due 24 or 72 hours after publication. Anyone evaluating this has minutes,
+ * so this brings the next one forward and runs it through the same path the runner uses.
+ */
+function FastForwardButton() {
+  const { t } = useI18n();
+  const notify = useToast();
+  const [running, setRunning] = useState(false);
+
+  return (
+    <button
+      disabled={running}
+      onClick={async () => {
+        setRunning(true);
+        try {
+          const { fired } = await api.fastForward();
+          notify(
+            fired ? t('demo.fired', { at: fired.kind }) : t('demo.nothingDue'),
+            fired ? 'ok' : 'error',
+          );
+        } catch {
+          notify(t('state.error'), 'error');
+        } finally {
+          setRunning(false);
+        }
+      }}
+      className={cn(
+        focusRing,
+        'border-warning/40 hover:bg-warning/20 flex h-6 shrink-0 items-center gap-1 rounded-full border px-2',
+      )}
+    >
+      <FastForward className="size-3" />
+      <span className="hidden sm:inline">{t('demo.fastForward')}</span>
+    </button>
   );
 }

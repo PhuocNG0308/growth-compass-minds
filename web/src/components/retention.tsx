@@ -29,6 +29,7 @@ export function RetentionChart({
   width = 720,
   compare,
   focus,
+  onCursor,
   onAsk,
 }: {
   retention: NonNullable<VideoDetail['retention']>;
@@ -38,6 +39,8 @@ export function RetentionChart({
   compare?: { title: string; points: RetentionPoint[] } | null;
   /** A position someone arrived here to look at, as a share of the video's length. */
   focus?: number | null;
+  /** Where the pointer is, so a panel beside the chart can echo the same moment. */
+  onCursor?: (ratio: number | null) => void;
   /** Finding the second people left is only half the job; this is where the other half starts. */
   onAsk?: (question: string) => void;
 }) {
@@ -69,6 +72,10 @@ export function RetentionChart({
   }, [focus, points]);
 
   const active = cursor == null ? null : points[cursor];
+
+  useEffect(() => {
+    onCursor?.(active ? active.ratio : null);
+  }, [active, onCursor]);
   const intro = durationS && durationS > INTRO_S ? INTRO_S / durationS : null;
   const ranked = points.some((p) => p.relative != null);
 

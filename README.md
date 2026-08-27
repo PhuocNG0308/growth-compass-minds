@@ -114,10 +114,6 @@ Configuration is documented in [`.env.example`](.env.example).
 
 ## Docs
 
-- [Hackathon brief & judging criteria](docs/00-hackathon-brief.md)
-- [Minds platform cheat sheet](docs/01-minds-platform.md)
-- [Builder Tools: CLI, client library, API](docs/02-builder-tools.md)
 - [Product spec](docs/03-product-spec.md)
-- [Scoring strategy & build plan](docs/04-scoring-and-plan.md)
 - [Integration layer & API contract](docs/05-integration.md) — including the verified limits
   of YouTube's public API and how the demo data is sourced

@@ -412,7 +412,7 @@ Canvas/surface bám sát 60-30. Phần có màu dừng ở **~4%, không phải 
 
 ### Kỷ luật thiết kế
 
-Bộ ràng buộc chống "UI slop" đóng thành skill [`ui-anti-slop`](../.claude/skills/ui-anti-slop/SKILL.md), kèm script kiểm tra tự động. Chạy trên chính code này lần đầu cho ra:
+Bộ ràng buộc chống "UI slop" đóng thành skill `ui-anti-slop`, kèm script kiểm tra tự động. Chạy trên chính code này lần đầu cho ra:
 
 | Vi phạm | Trước | Sau |
 |---|---|---|
@@ -523,7 +523,7 @@ Bốn chỗ vẽ số, tất cả là SVG viết tay, **không thêm thư viện
 - **Sparkline** trên thẻ feed — hình dạng tích luỹ lượt xem, chuẩn hoá theo đỉnh của chính video đó.
 - **Retention** trên trang video (đã có từ trước).
 
-Ba ràng buộc tự đặt, theo skill [`dataviz`](../.claude/skills/dataviz/SKILL.md):
+Ba ràng buộc tự đặt, theo skill `dataviz`:
 
 1. **Không bao giờ hai trục y.** Views và CTR khác thang đo hoàn toàn; gộp chung một khung thì khoảng cách giữa hai trục là tuỳ tiện và biểu đồ sẽ bịa ra một tương quan không có trong dữ liệu. Vì vậy trang video có chip đổi chỉ số chứ không có hai đường.
 2. **Một chuỗi, một màu.** Chạy validator của skill trên hai màu nhấn của hệ (`#445c4b` và `#b03a3f`) cho kết quả ΔE 2.0 dưới protanopia và 4.9 dưới deuteranopia — tức người mù màu đỏ-lục **không phân biệt được** sage với đỏ. Nên không biểu đồ nào dùng hai màu làm hai chuỗi. Mốc tham chiếu vẽ bằng hairline trung tính có nhãn trực tiếp.
@@ -623,7 +623,7 @@ Dán URL hoặc nội dung file này vào hội thoại với Mind thay vì mô 
 
 | Muốn làm | Có API không |
 |---|---|
-| Phân tích livestream | **Có.** Dimension `liveOrOnDemand`, metric `averageConcurrentViewers` và `peakConcurrentViewers` trong Analytics API. **Đã cố ý không làm** — xem [04 §4b](04-scoring-and-plan.md) |
+| Phân tích livestream | **Có.** Dimension `liveOrOnDemand`, metric `averageConcurrentViewers` và `peakConcurrentViewers` trong Analytics API. **Đã cố ý không làm** |
 | Đọc/phân tích bài Community | **Không.** Data API v3 không có resource nào cho community post |
 | Tải transcript/caption | Có, nhưng `captions.download` đòi scope `youtube.force-ssl` — tức phá bỏ trạng thái chỉ-đọc |
 | Tự đổi title / thumbnail | Có, nhưng đòi scope ghi. **Đã cố ý không làm** — xem §6c |

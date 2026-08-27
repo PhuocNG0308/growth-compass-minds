@@ -58,7 +58,7 @@ Chính vòng lặp này làm ba tính chất bắt buộc của hackathon trở 
 | `superfan-radar` | Lọc ra ~5 comment đáng trả lời: superfan quay lại, câu hỏi là ý tưởng video, chỉ trích sớm. **Nhớ người xem qua nhiều tháng.** | Data API v3 |
 | `growth-digest` | Digest hàng tuần + checkpoint sau đăng, đẩy chủ động qua Telegram | tất cả bên trên |
 
-Xây bằng quy trình hội thoại của Minds: **Describe → Refine → Connect → Run → Inspect → Publish** (xem [01-minds-platform.md](01-minds-platform.md)).
+Xây bằng quy trình hội thoại của Minds: **Describe → Refine → Connect → Run → Inspect → Publish**.
 
 ## 5. Guardrails (Tenets kiểu invariant)
 

@@ -7,3 +7,12 @@ dist/
 *.log
 *.tsbuildinfo
 txt/
+
+# Local-only: agent instructions, skills, and working notes. Not part of the product.
+CLAUDE.md
+.claude/
+docs/00-hackathon-brief.md
+docs/01-minds-platform.md
+docs/02-builder-tools.md
+docs/04-scoring-and-plan.md
+docs/_research/

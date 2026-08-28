@@ -164,6 +164,18 @@ The repository deploys as it stands: [`vercel.json`](vercel.json) builds the fro
 `web/dist` for the CDN and routes `/api`, `/auth`, `/v1` and `/health` into a single function
 at [`api/index.ts`](api/index.ts), which is the same Hono app the local server runs.
 
+Two settings there are load-bearing and neither is obvious, so they are worth stating before
+someone tidies them away:
+
+- **`"framework": null`.** Vercel detects any repository with `hono` in its dependencies and a
+  Hono import in `src/app.ts` as a Hono backend, then looks for a server entrypoint inside the
+  output directory and fails with *No entrypoint found in output directory: "web/dist"*. Pinning
+  the framework to `null` leaves `@vercel/node` for the function and `@vercel/static-build` for
+  the frontend, which is the intended split.
+- **`typescript` is held at `5.x`.** Vercel's Node builder compiles the function with whichever
+  TypeScript the repository provides. On 7.x it emits nothing and the build fails with
+  *TypeScript did not emit an output*. Local type checking is unaffected either way.
+
 **1. Provision Postgres** anywhere that speaks the wire protocol — Neon, Vercel Postgres and
 Supabase all work. Copy the **pooled** connection string.
 

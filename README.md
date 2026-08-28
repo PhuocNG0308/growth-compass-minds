@@ -175,6 +175,11 @@ someone tidies them away:
 - **`typescript` is held at `5.x`.** Vercel's Node builder compiles the function with whichever
   TypeScript the repository provides. On 7.x it emits nothing and the build fails with
   *TypeScript did not emit an output*. Local type checking is unaffected either way.
+- **`rewriteRelativeImportExtensions` in [`tsconfig.json`](tsconfig.json).** Every import in
+  `src/` carries a `.ts` extension, which `tsx` resolves directly. Vercel's builder emits real
+  `.js` files instead, and without this option it copies the `.ts` specifiers into them
+  verbatim — the function then builds cleanly and dies on its first request with
+  `ERR_MODULE_NOT_FOUND: .../src/app.ts`. Nothing local depends on it.
 
 **1. Provision Postgres** anywhere that speaks the wire protocol — Neon, Vercel Postgres and
 Supabase all work. Copy the **pooled** connection string.

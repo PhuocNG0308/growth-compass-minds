@@ -1,40 +1,17 @@
 import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
-import { Hono } from 'hono';
+import { app } from './app.ts';
 import { sql } from './db/client.ts';
-import { demoEnabled, env, googleConfigured, unsetEnv } from './env.ts';
-import { appRoutes } from './routes/app.ts';
-import { authRoutes } from './routes/auth.ts';
-import { mindRoutes } from './routes/mind.ts';
+import { demoEnabled, env, unsetEnv } from './env.ts';
 import { startCheckpointRunner } from './mind/checkpoints.ts';
 import { startNurtureRunner } from './mind/nurture.ts';
 import { startDemoRefresh } from './demo-refresh.ts';
 import { mindEnabled, refreshCognition } from './mind/client.ts';
-import { openapi } from './openapi.ts';
 import { reachableAt } from './net.ts';
 
-const app = new Hono();
-
-app.get('/health', (c) => c.json({ ok: true, mindEnabled }));
-app.get('/api/mode', (c) => c.json({ demo: demoEnabled, googleConfigured, liveMind: mindEnabled }));
-// public so it can be pasted into the Minds chat without juggling the bearer token.
-// The Mind builds its tool schema from `servers`, so the URL has to be absolute and has
-// to be the one it can actually reach — a tunnel host, not localhost.
-app.get('/v1/openapi.json', (c) =>
-  c.json({
-    ...openapi,
-    servers: [{ url: env.PUBLIC_BASE_URL ?? new URL(c.req.url).origin, description: 'Growth API' }],
-  }),
-);
-app.route('/auth', authRoutes);
-app.route('/api', appRoutes);
-app.route('/v1', mindRoutes);
+// registered here rather than in the app itself: on a serverless host the CDN owns the
+// built frontend and the function never sees a request for it
 app.use('/*', serveStatic({ root: './web/dist' }));
-
-app.onError((err, c) => {
-  console.error('[http]', err);
-  return c.json({ error: err.message }, 500);
-});
 
 const hasDatabase = !unsetEnv.includes('DATABASE_URL');
 if (!hasDatabase) console.warn('  Checkpoint runner is off until DATABASE_URL is set.\n');

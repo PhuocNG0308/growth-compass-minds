@@ -4,6 +4,12 @@ import { z } from 'zod';
 
 if (existsSync('.env')) process.loadEnvFile('.env');
 
+// On Vercel the Mind's callback host is only known once the project has a domain, and it is
+// the one URL that cannot be guessed wrong without the Mind losing its tool.
+if (!process.env.PUBLIC_BASE_URL && process.env.VERCEL_PROJECT_PRODUCTION_URL) {
+  process.env.PUBLIC_BASE_URL = `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
+}
+
 const schema = z.object({
   PORT: z.coerce.number().default(8080),
   DATABASE_URL: z.string().min(1),
@@ -14,6 +20,8 @@ const schema = z.object({
   GROWTH_API_TOKEN: z.string().min(32),
   PUBLIC_BASE_URL: z.url().optional(),
   MINDS_BUILDER_API_KEY: z.string().optional(),
+  // shared with the scheduler that drives /api/cron/tick where no process can hold a timer
+  CRON_SECRET: z.string().optional(),
   MIND_ID: z.string().optional(),
   MIND_CONVERSATION_ALIAS: z.string().default('growth'),
   YOUTUBE_REPLIES: z.enum(['on', 'off']).default('on'),
@@ -43,9 +51,15 @@ function fallbacks(port: string) {
   } as Record<string, string>;
 }
 
+// Without these a deployment is not degraded, it is broken: nothing can be stored, sessions
+// cannot survive a restart, and the Mind cannot authenticate. Google's three are different —
+// leaving them out only closes the Connect YouTube door, which the sample channel does not use.
+const REQUIRED_IN_PRODUCTION = ['DATABASE_URL', 'ENCRYPTION_KEY', 'GROWTH_API_TOKEN'];
+
 function degraded() {
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error(`missing required configuration: ${unsetEnv.join(', ')}`);
+  const fatal = unsetEnv.filter((key) => REQUIRED_IN_PRODUCTION.includes(key));
+  if (process.env.NODE_ENV === 'production' && fatal.length > 0) {
+    throw new Error(`missing required configuration: ${fatal.join(', ')}`);
   }
 
   const standIn = fallbacks(process.env.PORT ?? '8080');
@@ -84,4 +98,4 @@ export const env = parsed.success ? parsed.data : degraded();
 const GOOGLE_KEYS = ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_REDIRECT_URI'];
 
 export const googleConfigured = !GOOGLE_KEYS.some((key) => unsetEnv.includes(key));
-export const demoEnabled = env.DEMO_MODE === 'on' && process.env.NODE_ENV !== 'production';
+export const demoEnabled = env.DEMO_MODE === 'on';

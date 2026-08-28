@@ -108,24 +108,115 @@ Analytics API answers `UNAUTHENTICATED` to anything but the owner's own OAuth to
 derived deterministically from the real counts in [`src/demo.ts`](src/demo.ts), never randomly,
 so they track reality as it moves. Connect your own channel and all of them are real.
 
-## Run it
+## Run it locally
+
+Node 22 or newer, and a PostgreSQL 17 you can reach. The bundled `docker-compose.yml` is the
+quickest way to get one; a native install is just as good.
 
 ```bash
 npm install && npm --prefix web install
-docker compose up -d              # PostgreSQL 17
-npm run migrate
-npm run seed:demo                 # pulls a real channel's public catalogue
-DEMO_MODE=on npm run dev
+cp .env.example .env
 ```
 
-Open the app and pick **Explore with sample data**. No Google account needed. With
-`MINDS_BUILDER_API_KEY` set, asking the Mind about that channel reaches your real Mind.
+Three values in `.env` have no sensible default. Everything else can stay as shipped:
 
-To drive a real channel instead, set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and
-`GOOGLE_REDIRECT_URI` and connect through Google's consent window. A connected channel is
-always synced from the Analytics API; the sample channel is the only one that is not.
+| Key | Value |
+|---|---|
+| `DATABASE_URL` | `postgres://growth:growth@localhost:5432/growth_compass` matches `docker-compose.yml` |
+| `ENCRYPTION_KEY` | `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"` |
+| `GROWTH_API_TOKEN` | the same command again, for a second and different value |
 
-Configuration is documented in [`.env.example`](.env.example).
+Set `DEMO_MODE=on`, then bring the database up, fill it, and start:
+
+```bash
+docker compose up -d      # PostgreSQL 17 on :5432
+npm run setup:db          # apply migrations, then pull the sample channel's public catalogue
+npm run build:web         # the API serves web/dist
+npm run dev               # http://localhost:8080
+```
+
+Open it and choose **Explore with sample data**. No Google account and no API keys are needed
+to see the whole product, including Fast-forward and Sandbox Studio.
+
+Working on the interface instead of looking at it: leave `npm run dev` running and start Vite
+beside it with `npm --prefix web run dev`, which serves the UI on `:5173` with hot reload and
+proxies `/api` and `/auth` to the API. `npm run build:web` is then unnecessary.
+
+### Turning on the parts that need keys
+
+Each of these is independent — the app states in its own interface which ones are off.
+
+| To get | Set | Notes |
+|---|---|---|
+| A Mind that actually answers | `MINDS_BUILDER_API_KEY` | From hellominds.ai. Without it every answer comes back empty and the app says so |
+| A Mind that can call back into the ledger | `PUBLIC_BASE_URL`, and `GROWTH_API_TOKEN` in **My Connections** on hellominds.ai | The Mind cannot reach `localhost`. In development, expose the port with an ngrok static domain: `ngrok http 8080 --domain=<domain>.ngrok-free.app` |
+| Real comments and live chat on the sample channel | `YOUTUBE_API_KEY` | YouTube Data API v3, public reads only. The sample channel works without it |
+| Your own channel instead of the sample one | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` | Unlocks **Connect YouTube**. A connected channel is synced from the Analytics API, so none of its numbers are modelled |
+
+`npm run mind` prints the Mind's status — cognition balance, equipped skills and apps, and
+what is still missing before it can call the ledger; `npm run mind script` lists the bootstrap
+turns and `npm run mind send <turn>` sends one. Every key is documented in
+[`.env.example`](.env.example).
+
+## Deploy to Vercel
+
+The repository deploys as it stands: [`vercel.json`](vercel.json) builds the frontend to
+`web/dist` for the CDN and routes `/api`, `/auth`, `/v1` and `/health` into a single function
+at [`api/index.ts`](api/index.ts), which is the same Hono app the local server runs.
+
+**1. Provision Postgres** anywhere that speaks the wire protocol — Neon, Vercel Postgres and
+Supabase all work. Copy the **pooled** connection string.
+
+**2. Create the schema and the sample channel from your machine**, because the seed pulls a
+real channel's catalogue from YouTube and takes longer than a build should:
+
+```bash
+# bash
+DATABASE_URL='postgres://...pooled...' npm run setup:db
+
+# PowerShell
+$env:DATABASE_URL='postgres://...pooled...'; npm run setup:db
+```
+
+Environment variables beat `.env`, so this is safe to run beside a local setup.
+
+**3. Import the repository** at [vercel.com/new](https://vercel.com/new) and set:
+
+| Variable | Value |
+|---|---|
+| `DATABASE_URL` | the pooled connection string from step 1 |
+| `ENCRYPTION_KEY` | the same 64-hex value each deploy — regenerating it signs everyone out |
+| `GROWTH_API_TOKEN` | the bearer token the Mind holds in **My Connections** |
+| `DEMO_MODE` | `on` |
+| `MINDS_BUILDER_API_KEY` | optional; without it the Mind answers nothing |
+| `YOUTUBE_API_KEY` | optional; real comments on the sample channel |
+| `CRON_SECRET` | any long random string — see below |
+
+Leave `PUBLIC_BASE_URL` unset: the deployment fills it in from its own production domain, so
+`GET /v1/openapi.json` already advertises the right host to the Mind. Google's three keys can
+be left out entirely; that only hides **Connect YouTube**.
+
+**4. Deploy**, then open the URL and choose **Explore with sample data**. To let the Mind write
+back, paste `https://<your-domain>/v1/openapi.json` and the `GROWTH_API_TOKEN` into **My
+Connections** on hellominds.ai.
+
+### What differs from the long-running server
+
+A serverless function has no process to hold a timer in, so the checkpoint runner, the nurture
+runner and the sample channel's refresher are driven by a scheduled request to
+`GET /api/cron/tick`, authenticated with `Authorization: Bearer $CRON_SECRET`. `vercel.json`
+registers it as a daily cron, which is the most a Hobby plan allows; on Pro, raise it to
+`*/10 * * * *` to match the local poll interval.
+
+This does not affect a demo. **Fast-forward** is a request the browser makes, so it fires a
+checkpoint through the same path on Vercel as it does locally. Two Sandbox Studio switches do
+depend on process memory and may not survive between requests: the **Mind** tab's failure
+states, and the simulated live strip. Everything else in the sandbox — firing checkpoints,
+adding commenters, pushing a proposal, resetting the run — is written to the database and
+behaves identically.
+
+Set the function's region near the database in **Project → Settings → Functions**; a European
+database with a US function pays for the distance on every query.
 
 ## Docs
 

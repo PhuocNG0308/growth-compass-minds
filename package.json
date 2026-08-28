@@ -11,6 +11,7 @@
     "migrate": "tsx src/db/migrate.ts",
     "db:check": "tsx dev/dbcheck.ts",
     "seed:demo": "tsx dev/seed-demo.ts",
+    "setup:db": "npm run migrate && npm run seed:demo",
     "refresh:demo": "tsx dev/refresh-demo.ts",
     "flatten:fe": "tsx dev/flatten-fe.ts",
     "mind": "tsx dev/mind.ts",

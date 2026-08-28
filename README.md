@@ -185,7 +185,7 @@ Environment variables beat `.env`, so this is safe to run beside a local setup.
 | Variable | Value |
 |---|---|
 | `DATABASE_URL` | the pooled connection string from step 1 |
-| `ENCRYPTION_KEY` | the same 64-hex value each deploy — regenerating it signs everyone out |
+| `ENCRYPTION_KEY` | **the same value the seed in step 2 ran under**, and the same on every deploy — the seed encrypts a stored credential with it, and regenerating it signs everyone out |
 | `GROWTH_API_TOKEN` | the bearer token the Mind holds in **My Connections** |
 | `DEMO_MODE` | `on` |
 | `MINDS_BUILDER_API_KEY` | optional; without it the Mind answers nothing |

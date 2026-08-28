@@ -60,8 +60,8 @@ export function MobileLanding({
     try {
       await api.demoSignIn();
       location.reload();
-    } catch {
-      setError('demo');
+    } catch (err) {
+      setError(err instanceof Error && err.message === 'demo' ? 'demo' : 'server');
     }
   }
 

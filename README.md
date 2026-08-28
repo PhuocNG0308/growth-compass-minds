@@ -197,6 +197,14 @@ $env:DATABASE_URL='postgres://...pooled...'; npm run setup:db
 
 Environment variables beat `.env`, so this is safe to run beside a local setup.
 
+Or run it from GitHub instead, which needs no machine of yours to be switched on: add
+`DATABASE_URL` and `ENCRYPTION_KEY` as repository secrets (Settings → Secrets and variables →
+Actions), then trigger **Seed the demo database** from the Actions tab. It applies migrations
+and seeds the sample channel against whatever `DATABASE_URL` points at
+([`.github/workflows/seed-demo.yml`](.github/workflows/seed-demo.yml)). Use it to reseed
+before a demo, too — the sample channel anchors its timestamps to the moment it is seeded, so
+a fresh run is what keeps *2 hours ago* saying two hours.
+
 **3. Import the repository** at [vercel.com/new](https://vercel.com/new) and set:
 
 | Variable | Value |

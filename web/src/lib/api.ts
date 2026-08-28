@@ -57,7 +57,9 @@ export const api = {
   mode: () => get<Mode>('/api/mode').catch(() => null),
   demoSignIn: async () => {
     const res = await fetch('/auth/demo', { method: 'POST' });
-    if (!res.ok) throw new Error('demo sign-in failed');
+    // 404 is the only answer that means the channel is missing; anything else is the
+    // server itself failing, and telling someone to reseed sends them the wrong way
+    if (!res.ok) throw new Error(res.status === 404 ? 'demo' : 'server');
   },
   me: () => get<Me>('/api/me'),
   ledger: () => get<Ledger>('/api/ledger'),

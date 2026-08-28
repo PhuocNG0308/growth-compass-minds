@@ -1,0 +1,29 @@
+name: Seed the demo database
+
+# The seed pulls a real channel's public catalogue and writes it to whichever database
+# DATABASE_URL points at, so it runs wherever that database is reachable — a laptop that
+# happens to be on is not one of the requirements. Trigger it from the Actions tab.
+on:
+  workflow_dispatch:
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Apply migrations and seed the sample channel
+        run: npm run setup:db
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # must match the deployment's, because the seed encrypts a stored credential with it
+          ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
+          # optional: real comments instead of modelled ones
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}

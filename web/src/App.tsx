@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { FastForward, FlaskConical, TriangleAlert, X } from 'lucide-react';
 import { Rail } from '@/components/rail';
+import { SandboxStudio } from '@/components/sandbox';
 import { Shell } from '@/components/shell';
 import { VideoNav, type PostSection } from '@/components/video-nav';
 import { Audience } from '@/pages/audience';
@@ -120,33 +121,53 @@ export default function App() {
     </MobileShell>
   );
 
-  if (mobile) return phone;
-  if (preview) return <PhonePreview onExit={() => setPreview(false)}>{phone}</PhonePreview>;
+  // the demo controls sit outside the shell so the phone preview keeps them on the backdrop
+  // rather than inside the device frame, where a fixed button would be trapped
+  const studio = me.demo ? <SandboxStudio mobile={mobile} /> : null;
+
+  if (mobile)
+    return (
+      <>
+        {phone}
+        {studio}
+      </>
+    );
+
+  if (preview)
+    return (
+      <>
+        <PhonePreview onExit={() => setPreview(false)}>{phone}</PhonePreview>
+        {studio}
+      </>
+    );
 
   return (
-    <Shell
-      me={me}
-      route={route}
-      title={title}
-      banner={<Banners me={me} />}
-      nav={
-        ytVideoId
-          ? (wide) => (
-              <VideoNav
-                ytVideoId={ytVideoId}
-                post={video.data?.post ?? null}
-                section={section}
-                behind={behind.current}
-                wide={wide}
-              />
-            )
-          : undefined
-      }
-      rail={ytVideoId ? undefined : <Rail me={me} />}
-      onPreview={() => setPreview(true)}
-    >
-      <DesktopScreen {...view} />
-    </Shell>
+    <>
+      <Shell
+        me={me}
+        route={route}
+        title={title}
+        banner={<Banners me={me} />}
+        nav={
+          ytVideoId
+            ? (wide) => (
+                <VideoNav
+                  ytVideoId={ytVideoId}
+                  post={video.data?.post ?? null}
+                  section={section}
+                  behind={behind.current}
+                  wide={wide}
+                />
+              )
+            : undefined
+        }
+        rail={ytVideoId ? undefined : <Rail me={me} />}
+        onPreview={() => setPreview(true)}
+      >
+        <DesktopScreen {...view} />
+      </Shell>
+      {studio}
+    </>
   );
 }
 

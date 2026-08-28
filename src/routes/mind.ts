@@ -207,6 +207,7 @@ const conceptBody = z.object({
 const proposalBody = z.object({
   channelId: z.string(),
   ytVideoId: z.string().optional(),
+  ytAuthorId: z.string().optional(),
   kind: z.enum(PROPOSAL_KINDS),
   summary: z.string().min(5).max(140),
   detail: z.string().min(5),
@@ -225,6 +226,7 @@ mindRoutes.post('/proposals', async (c) => {
   const body = proposalBody.parse(await c.req.json());
   const channel = await requireChannel(body.channelId);
   const video = body.ytVideoId ? await repo.getVideo(body.ytVideoId) : undefined;
+  const viewer = body.ytAuthorId ? await repo.getViewer(channel.id, body.ytAuthorId) : undefined;
 
   if (body.kind === 'experiment' && !body.experiment) {
     throw new HttpError(400, 'an experiment proposal needs `experiment` with at least one concept');
@@ -233,6 +235,7 @@ mindRoutes.post('/proposals', async (c) => {
   const proposal = await repo.createProposal({
     channelId: channel.id,
     videoId: video?.id ?? null,
+    viewerId: viewer?.id ?? null,
     kind: body.kind,
     summary: body.summary,
     detail: body.detail,

@@ -125,6 +125,8 @@ export type Proposal = {
   videoTitle: string | null;
   thumbnailUrl: string | null;
   videoPublishedAt: string | null;
+  viewerYtAuthorId: string | null;
+  viewerName: string | null;
 };
 
 export type Snapshot = {
@@ -243,6 +245,14 @@ export type PostDetail = {
 };
 
 export type ChatTurn = { role: 'creator' | 'mind'; text: string; at: string };
+
+/** The transcript plus, when the Mind is still thinking, how long it has been at it. */
+export type ChatLog = {
+  turns: ChatTurn[];
+  waitingS: number | null;
+  /** Why the last wait ended with nothing, reported once. */
+  failed: 'timedOut' | 'outOfCognition' | null;
+};
 
 export type ChatThreadDigest = {
   id: string;

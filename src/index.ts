@@ -7,6 +7,7 @@ import { appRoutes } from './routes/app.ts';
 import { authRoutes } from './routes/auth.ts';
 import { mindRoutes } from './routes/mind.ts';
 import { startCheckpointRunner } from './mind/checkpoints.ts';
+import { startNurtureRunner } from './mind/nurture.ts';
 import { startDemoRefresh } from './demo-refresh.ts';
 import { mindEnabled, refreshCognition } from './mind/client.ts';
 import { openapi } from './openapi.ts';
@@ -42,6 +43,7 @@ if (!hasDatabase) console.warn('  Checkpoint runner is off until DATABASE_URL is
 if (mindEnabled) void refreshCognition();
 
 const stopRunner = hasDatabase ? startCheckpointRunner() : () => {};
+const stopNurture = hasDatabase ? startNurtureRunner() : () => {};
 // the sample channel mirrors a real one, so it has to keep up with it
 const stopDemo = hasDatabase && demoEnabled ? startDemoRefresh() : () => {};
 const server = serve({ fetch: app.fetch, port: env.PORT, hostname: '0.0.0.0' }, ({ port }) =>
@@ -53,6 +55,7 @@ const server = serve({ fetch: app.fetch, port: env.PORT, hostname: '0.0.0.0' }, 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
     stopRunner();
+    stopNurture();
     stopDemo();
     server.close(() => void sql.end({ timeout: 5 }).then(() => process.exit(0)));
   });

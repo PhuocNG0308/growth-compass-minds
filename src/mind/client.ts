@@ -9,6 +9,7 @@ let session: Promise<{ client: Client; mindId: string }> | null = null;
 const conversations = new Map<string, Promise<void>>();
 
 export function mindSession() {
+  // a rejected promise left in place would turn one network blip into a dead Mind until restart
   session ??= (async () => {
     // passing the key explicitly: the library reads process.env when its module loads,
     // which happens before env.ts gets a chance to read .env
@@ -18,6 +19,9 @@ export function mindSession() {
     if (!mindId) throw new Error('no Mind available on this builder account');
     return { client, mindId };
   })();
+  session.catch(() => {
+    session = null;
+  });
   return session;
 }
 
@@ -27,6 +31,7 @@ export async function conversation(alias: string): Promise<{ client: Client; ali
   if (!ready) {
     ready = client.ensureConversation(alias, mindId).then(() => undefined);
     conversations.set(alias, ready);
+    ready.catch(() => conversations.delete(alias));
   }
   await ready;
   return { client, alias };

@@ -158,11 +158,12 @@ export async function createExperiment(input: {
   lever: string;
   hypothesis: string;
   prediction: Prediction;
+  sandbox?: boolean;
 }): Promise<Experiment> {
   const [row] = await sql<Experiment[]>`
-    insert into experiments (channel_id, video_id, lever, hypothesis, prediction)
+    insert into experiments (channel_id, video_id, lever, hypothesis, prediction, sandbox)
     values (${input.channelId}, ${input.videoId}, ${input.lever}, ${input.hypothesis},
-            ${sql.json(input.prediction)})
+            ${sql.json(input.prediction)}, ${input.sandbox ?? false})
     returning *`;
   return row!;
 }
@@ -453,6 +454,71 @@ export async function viewersBySegment(
     limit ${limit}`;
 }
 
+export type Crossing = {
+  viewerId: string;
+  channelId: string;
+  channelTitle: string;
+  ytAuthorId: string;
+  displayName: string;
+  commentCount: number;
+  firstSeenAt: Date;
+  lastSeenAt: Date;
+  tenureDays: number;
+  repliesSent: number;
+  previousSegment: string;
+  currentSegment: string;
+};
+
+/**
+ * Records where every viewer currently stands, for the rows that have never been recorded.
+ * A viewer first met at four comments has not crossed anything — they arrived there — so the
+ * first pass over a freshly synced channel has to write the ladder down before anything can
+ * be read as movement.
+ */
+export async function seedSegments(thresholds: SegmentThresholds): Promise<void> {
+  await sql`
+    update viewers set nurtured_segment = ${segmentCase(thresholds)}
+    where nurtured_segment is null`;
+}
+
+/**
+ * Viewers who have climbed a rung since the last time the Mind was told. The daily cap is
+ * applied in SQL rather than in the runner because it is a property of the channel, not of
+ * the tick: a channel that gained forty superfans overnight is still worth one conversation.
+ */
+export async function segmentCrossings(
+  thresholds: SegmentThresholds,
+  opts: { limit: number; dailyCap: number },
+): Promise<Crossing[]> {
+  return sql<Crossing[]>`
+    with fired as (
+      select channel_id, count(*)::int as today from viewers
+      where nurtured_at > now() - interval '1 day'
+      group by channel_id
+    )
+    select w.id as viewer_id, w.channel_id, ch.title as channel_title, w.yt_author_id,
+           w.display_name, w.comment_count, w.first_seen_at, w.last_seen_at,
+           extract(day from w.last_seen_at - w.first_seen_at)::int as tenure_days,
+           (select count(*)::int from comments cm
+             where cm.viewer_id = w.id and cm.replied_at is not null) as replies_sent,
+           w.nurtured_segment as previous_segment,
+           ${segmentCase(thresholds)} as current_segment
+    from viewers w
+      join channels ch on ch.id = w.channel_id
+      left join fired on fired.channel_id = w.channel_id
+    where w.nurtured_segment is not null
+      and ${segmentCase(thresholds)} <> w.nurtured_segment
+      and coalesce(fired.today, 0) < ${opts.dailyCap}
+    order by w.comment_count desc, w.last_seen_at desc
+    limit ${opts.limit}`;
+}
+
+export async function markNurtured(viewerId: string, segment: string): Promise<void> {
+  await sql`
+    update viewers set nurtured_segment = ${segment}, nurtured_at = now()
+    where id = ${viewerId}`;
+}
+
 export type Activity = {
   checkpointId: string;
   kind: CheckpointKind;
@@ -608,18 +674,20 @@ export async function counts(channelId: string): Promise<{
 export async function createProposal(input: {
   channelId: string;
   videoId: string | null;
+  viewerId?: string | null;
   kind: ProposalKind;
   summary: string;
   detail: string;
   rationale: string;
   options: string[];
   payload?: ExperimentPayload | null;
+  sandbox?: boolean;
 }): Promise<Proposal> {
   const [row] = await sql<Proposal[]>`
-    insert into proposals (channel_id, video_id, kind, summary, detail, rationale, options, payload)
-    values (${input.channelId}, ${input.videoId}, ${input.kind}, ${input.summary},
+    insert into proposals (channel_id, video_id, viewer_id, kind, summary, detail, rationale, options, payload, sandbox)
+    values (${input.channelId}, ${input.videoId}, ${input.viewerId ?? null}, ${input.kind}, ${input.summary},
             ${input.detail}, ${input.rationale}, ${sql.json(input.options)},
-            ${input.payload ? sql.json(input.payload) : null})
+            ${input.payload ? sql.json(input.payload) : null}, ${input.sandbox ?? false})
     returning *`;
   return row!;
 }
@@ -628,12 +696,17 @@ export type ProposalRow = Proposal & {
   videoTitle: string | null;
   thumbnailUrl: string | null;
   videoPublishedAt: Date | null;
+  viewerYtAuthorId: string | null;
+  viewerName: string | null;
 };
 
 export async function listProposals(channelId: string, status?: string): Promise<ProposalRow[]> {
   return sql<ProposalRow[]>`
-    select p.*, v.title as video_title, v.thumbnail_url, v.published_at as video_published_at
-    from proposals p left join videos v on v.id = p.video_id
+    select p.*, v.title as video_title, v.thumbnail_url, v.published_at as video_published_at,
+           w.yt_author_id as viewer_yt_author_id, w.display_name as viewer_name
+    from proposals p
+      left join videos v on v.id = p.video_id
+      left join viewers w on w.id = p.viewer_id
     where p.channel_id = ${channelId} ${status ? sql`and p.status = ${status}` : sql``}
     order by p.created_at desc
     limit 40`;
@@ -793,6 +866,18 @@ export async function markReplied(
     update comments
     set replied_at = now(), reply_text = ${text}, reply_yt_id = ${replyYtId}
     where yt_comment_id = ${ytCommentId}`;
+}
+
+export type SentReply = { comment: string; reply: string };
+
+/** What the creator has actually sent, so a draft can be matched against their voice. */
+export async function recentReplies(channelId: string, limit = 6): Promise<SentReply[]> {
+  return sql<SentReply[]>`
+    select c.text as comment, c.reply_text as reply
+    from comments c join videos v on v.id = c.video_id
+    where v.channel_id = ${channelId} and c.reply_text is not null
+    order by c.replied_at desc
+    limit ${limit}`;
 }
 
 export async function commentOwner(

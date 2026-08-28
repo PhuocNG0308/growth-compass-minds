@@ -2,8 +2,8 @@ import type {
   Activity,
   Audience,
   ChatHit,
+  ChatLog,
   ChatThreadDigest,
-  ChatTurn,
   FeedPost,
   Ledger,
   Live,
@@ -26,77 +26,32 @@ async function get<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-type AskResult = {
-  reply: string | null;
-  timedOut: boolean;
-  mindOffline?: boolean;
-  outOfCognition?: boolean;
-};
+type AskResult = { mindOffline: boolean; waitingS: number | null };
 
-export type AskStage =
-  | { stage: 'reading' }
-  | { stage: 'briefed'; comments: number }
-  | { stage: 'sent' }
-  | { stage: 'waiting'; elapsedS: number };
+// a draft has nowhere to land later, so this one call still waits the Mind out
+type Draft = { reply: string | null; timedOut: boolean; mindOffline?: boolean };
 
-async function post(path: string, body: unknown): Promise<AskResult> {
+async function post<T = AskResult>(path: string, body: unknown): Promise<T> {
   const res = await fetch(path, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`${path} failed`);
-  return res.json() as Promise<AskResult>;
-}
-
-/**
- * The Mind has no token stream to forward, so this carries the one thing that is actually
- * happening: which step the answer is on, and how long it has been on it.
- */
-async function postStreamed(
-  path: string,
-  body: unknown,
-  onStage: (update: AskStage) => void,
-): Promise<AskResult> {
-  const res = await fetch(path, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok || !res.body) throw new Error(`${path} failed`);
-
-  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
-  let buffer = '';
-  let answer: AskResult | null = null;
-
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += value;
-
-    let cut = buffer.indexOf('\n\n');
-    for (; cut !== -1; cut = buffer.indexOf('\n\n')) {
-      const frame = buffer.slice(0, cut);
-      buffer = buffer.slice(cut + 2);
-
-      const name = /^event:\s*(.+)$/m.exec(frame)?.[1]?.trim();
-      const data = frame
-        .split('\n')
-        .filter((line) => line.startsWith('data:'))
-        .map((line) => line.slice(5).trim())
-        .join('');
-
-      if (name === 'stage') onStage(JSON.parse(data) as AskStage);
-      else if (name === 'done') answer = JSON.parse(data) as AskResult;
-      else if (name === 'failed') throw new Error(`${path} failed`);
-    }
-  }
-
-  if (!answer) throw new Error(`${path} ended without an answer`);
-  return answer;
+  return res.json() as Promise<T>;
 }
 
 export type Mode = { demo: boolean; googleConfigured: boolean; liveMind: boolean };
+
+export const MIND_STATES = ['normal', 'empty', 'offline', 'slow'] as const;
+export type MindState = (typeof MIND_STATES)[number];
+
+export type Sandbox = {
+  mind: MindState;
+  live: boolean;
+  videos: Array<{ ytVideoId: string; title: string }>;
+  next: { kind: string; dueAt: string; videoTitle: string | null; hypothesis: string } | null;
+};
 
 export const api = {
   mode: () => get<Mode>('/api/mode').catch(() => null),
@@ -123,17 +78,9 @@ export const api = {
     ),
   feed: () => get<FeedPost[]>('/api/feed'),
   post: (ytVideoId: string) => get<PostDetail>(`/api/posts/${encodeURIComponent(ytVideoId)}`),
-  chat: (ytVideoId: string) => get<ChatTurn[]>(`/api/posts/${encodeURIComponent(ytVideoId)}/chat`),
-  ask: (
-    ytVideoId: string,
-    question: string,
-    mentions: Mention[] = [],
-    onStage?: (update: AskStage) => void,
-  ) => {
-    const path = `/api/posts/${encodeURIComponent(ytVideoId)}/ask`;
-    const body = { question, mentions };
-    return onStage ? postStreamed(path, body, onStage) : post(path, body);
-  },
+  chat: (ytVideoId: string) => get<ChatLog>(`/api/posts/${encodeURIComponent(ytVideoId)}/chat`),
+  ask: (ytVideoId: string, question: string, mentions: Mention[] = []) =>
+    post(`/api/posts/${encodeURIComponent(ytVideoId)}/ask`, { question, mentions }),
 
   chats: () => get<ChatThreadDigest[]>('/api/chats'),
   searchChat: (q: string) => get<ChatHit[]>(`/api/chats/search?q=${encodeURIComponent(q)}`),
@@ -142,7 +89,7 @@ export const api = {
   mentions: (q: string) => get<Suggestion[]>(`/api/mentions?q=${encodeURIComponent(q)}`),
   viewer: (ytAuthorId: string) => get<ViewerProfileData>(`/api/viewers/${encodeURIComponent(ytAuthorId)}`),
   viewerChat: (ytAuthorId: string) =>
-    get<ChatTurn[]>(`/api/viewers/${encodeURIComponent(ytAuthorId)}/chat`),
+    get<ChatLog>(`/api/viewers/${encodeURIComponent(ytAuthorId)}/chat`),
   askViewer: (ytAuthorId: string, question: string, mentions: Mention[] = []) =>
     post(`/api/viewers/${encodeURIComponent(ytAuthorId)}/ask`, { question, mentions }),
   audience: (segment?: string | null, limit = 40) =>
@@ -150,7 +97,7 @@ export const api = {
   proposals: () => get<Proposal[]>('/api/proposals'),
   replies: () => get<{ enabled: boolean; queue: ReplyTarget[] }>('/api/replies'),
   draftReply: (ytCommentId: string, ytAuthorId: string) =>
-    post(`/api/comments/${encodeURIComponent(ytCommentId)}/draft`, { ytAuthorId }),
+    post<Draft>(`/api/comments/${encodeURIComponent(ytCommentId)}/draft`, { ytAuthorId }),
   sendReply: (ytCommentId: string, text: string) =>
     post(`/api/comments/${encodeURIComponent(ytCommentId)}/reply`, { text }),
   signOut: () => post('/api/signout', {}),
@@ -163,6 +110,23 @@ export const api = {
     if (!res.ok) throw new Error('decision failed');
     return res.json() as Promise<{ opened: { experimentId: string; checkpoints: number } | null }>;
   },
+  sandbox: () => get<Sandbox>('/api/sandbox'),
+  holdMind: (mind: MindState) => post<{ mind: MindState }>('/api/sandbox/state', { mind }),
+  holdLive: (live: boolean) => post<{ live: boolean }>('/api/sandbox/state', { live }),
+  injectComments: (body: { flavour: string; count: number; ytVideoId?: string }) =>
+    post<{ added: number; people: number; videoTitle: string }>('/api/sandbox/comments', body),
+  injectProposal: (body: {
+    kind: string;
+    ytVideoId?: string;
+    summary?: string;
+    predictedCtr?: number;
+    observedCtr?: number;
+  }) => post<{ summary: string }>('/api/sandbox/proposals', body),
+  resetSandbox: () =>
+    post<{ experiments: number; proposals: number; viewers: number; restored: number }>(
+      '/api/sandbox/reset',
+      {},
+    ),
   sync: async () => {
     const res = await fetch('/api/sync', { method: 'POST' });
     if (res.ok) return;

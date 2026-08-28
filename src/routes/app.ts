@@ -1,16 +1,17 @@
 import { Hono } from 'hono';
 import { deleteCookie, getCookie } from 'hono/cookie';
-import { streamSSE } from 'hono/streaming';
 import * as repo from '../db/repo.ts';
 import { isDemoChannel } from '../demo.ts';
 import { demoSource, liveState } from '../demo-refresh.ts';
 import { buildContext } from '../memory/context.ts';
 import { cognition, mindEnabled } from '../mind/client.ts';
+import { mindFacade, sandbox, simulatedLive } from '../sandbox.ts';
+import { sandboxRoutes } from './sandbox.ts';
 import { SESSION_COOKIE, verify } from '../session.ts';
 import { describeComment, SEGMENT_THRESHOLDS, SEGMENTS, segmentOf } from '../memory/segments.ts';
 import { resolve, suggest, type Mention } from '../memory/mentions.ts';
 import * as chat from '../db/chat.ts';
-import { ask, history, type AskContext, type AskOutcome, type AskStage, type OnStage } from '../mind/ask.ts';
+import { ask, history, send, type AskContext, type AskOutcome } from '../mind/ask.ts';
 import { steepestDropOffs } from '../youtube/analytics.ts';
 import { syncChannel, syncVideo } from '../youtube/sync.ts';
 import { accessTokenFor, repliesEnabled } from '../youtube/oauth.ts';
@@ -28,6 +29,8 @@ appRoutes.use('*', async (c, next) => {
   await next();
 });
 
+appRoutes.route('/sandbox', sandboxRoutes);
+
 appRoutes.post('/signout', (c) => {
   deleteCookie(c, SESSION_COOKIE, { path: '/' });
   return c.json({ ok: true });
@@ -35,6 +38,7 @@ appRoutes.post('/signout', (c) => {
 
 appRoutes.get('/me', async (c) => {
   const channel = c.get('channel');
+  const mind = mindFacade(isDemoChannel(channel), { enabled: mindEnabled, cognition: cognition() });
   return c.json({
     channelId: channel.id,
     ytChannelId: channel.ytChannelId,
@@ -47,10 +51,10 @@ appRoutes.get('/me', async (c) => {
     // a screen that shows derived numbers has to be able to say so, and to say which real
     // channel the real ones came from
     demoSource: isDemoChannel(channel) ? await demoSource() : null,
-    mindEnabled,
+    mindEnabled: mind.enabled,
     // enabled and able to think are different states, and a creator who asks a question
     // deserves to know which one they are in before they wait two minutes for silence
-    mindCognition: cognition(),
+    mindCognition: mind.cognition,
     repliesEnabled: repliesEnabled && !isDemoChannel(channel),
     counts: await repo.counts(channel.id),
   });
@@ -71,9 +75,14 @@ appRoutes.get('/activity', async (c) => c.json(await repo.recentActivity(c.get('
 
 // what is on air right now, for the sample channel only — a connected creator's own live
 // state comes from their own OAuth sync, not from reading a page in public
-appRoutes.get('/live', async (c) =>
-  c.json(isDemoChannel(c.get('channel')) ? await liveState() : null),
-);
+appRoutes.get('/live', async (c) => {
+  const channel = c.get('channel');
+  if (!isDemoChannel(channel)) return c.json(null);
+  if (sandbox().liveSince === null) return c.json(await liveState());
+
+  const [video] = await repo.listVideos(channel.id, 1);
+  return c.json(video ? simulatedLive(video, channel.title) : null);
+});
 
 /**
  * The autonomous loop runs on YouTube's clock: 24h, 72h, 7d, 28d after publication. Nobody
@@ -230,16 +239,47 @@ appRoutes.get('/posts/:ytVideoId', async (c) => {
   });
 });
 
-/** Reports each step, since gathering the briefing is a noticeable part of the wait. */
-async function answerAboutVideo(
+/**
+ * The Mind answers two to three minutes after the question no matter how short the briefing
+ * is, so the request hands the wait off and returns. The reply lands on the thread when it
+ * comes, and a reader polling the thread is told the wait is still running.
+ */
+type Wait = { at: number; failed?: 'timedOut' | 'outOfCognition' };
+const waits = new Map<string, Wait>();
+
+function deliver(threadId: string, settled: Promise<AskOutcome>): void {
+  waits.set(threadId, { at: Date.now() });
+  const started = Date.now();
+  void settled.then(
+    async (outcome) => {
+      if (outcome.reply) {
+        waits.delete(threadId);
+        await chat.appendMessage(threadId, 'mind', outcome.reply);
+        return;
+      }
+      waits.set(threadId, { at: started, failed: outcome.outOfCognition ? 'outOfCognition' : 'timedOut' });
+    },
+    () => waits.set(threadId, { at: started, failed: 'timedOut' }),
+  );
+}
+
+/** Reported once: a notice the creator has already been shown is not news on the next poll. */
+function waitOn(threadId: string): { waitingS: number | null; failed: string | null } {
+  const wait = waits.get(threadId);
+  if (!wait) return { waitingS: null, failed: null };
+  if (!wait.failed) return { waitingS: Math.round((Date.now() - wait.at) / 1000), failed: null };
+  waits.delete(threadId);
+  return { waitingS: null, failed: wait.failed };
+}
+
+type Handed = { mindOffline: boolean; waitingS: number | null };
+
+async function askAboutVideo(
   channel: Channel,
   video: Video,
   question: string,
   mentions: Mention[],
-  onStage?: OnStage,
-): Promise<Omit<AskOutcome, 'alias'>> {
-  onStage?.({ stage: 'reading' });
-
+): Promise<Handed> {
   const [snapshot, curve, comments] = await Promise.all([
     repo.latestSnapshot(video.id),
     repo.latestRetention(video.id),
@@ -268,10 +308,8 @@ async function answerAboutVideo(
       viewerCommentCount: comment.viewerCommentCount,
       text: comment.text,
     })),
+    extra: await resolve(channel, mentions),
   };
-
-  context.extra = await resolve(channel, mentions);
-  onStage?.({ stage: 'briefed', comments: context.comments.length });
 
   const thread = await chat.ensureThread({
     channelId: channel.id,
@@ -280,14 +318,14 @@ async function answerAboutVideo(
     alias: `post-${video.ytVideoId}`,
     title: video.title,
   });
+  // sent first: a send that fails on the network should leave no question on the thread that
+  // nothing is waiting to answer
+  const { settled } = await send(context, question);
   await chat.appendMessage(thread.id, 'creator', question, toRefs(mentions));
+  if (!settled) return { mindOffline: true, waitingS: null };
 
-  const answer = await ask(context, question, undefined, onStage);
-  if (answer.reply) await chat.appendMessage(thread.id, 'mind', answer.reply);
-
-  const { alias, ...outcome } = answer;
-  void alias;
-  return outcome;
+  deliver(thread.id, settled);
+  return { mindOffline: false, waitingS: 0 };
 }
 
 appRoutes.post('/posts/:ytVideoId/ask', async (c) => {
@@ -298,25 +336,8 @@ appRoutes.post('/posts/:ytVideoId/ask', async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const question = typeof body?.question === 'string' ? body.question.trim() : '';
   if (question.length < 3) return c.json({ error: 'ask something' }, 400);
-  const mentions = readMentions(body);
 
-  if (!c.req.header('accept')?.includes('text/event-stream')) {
-    return c.json(await answerAboutVideo(channel, video, question, mentions));
-  }
-
-  return streamSSE(c, async (stream) => {
-    const say = (event: string, data: unknown) =>
-      stream.writeSSE({ event, data: JSON.stringify(data) });
-
-    try {
-      const answer = await answerAboutVideo(channel, video, question, mentions, (update: AskStage) => {
-        void say('stage', update);
-      });
-      await say('done', answer);
-    } catch {
-      await say('failed', {});
-    }
-  });
+  return c.json(await askAboutVideo(channel, video, question, readMentions(body)));
 });
 
 appRoutes.get('/posts/:ytVideoId/chat', async (c) =>
@@ -380,29 +401,30 @@ appRoutes.post('/viewers/:ytAuthorId/ask', async (c) => {
     alias,
     title: viewer.displayName,
   });
+  const { settled } = await send(
+    {
+      alias,
+      channelTitle: channel.title,
+      ytVideoId: '',
+      title: `the viewer ${viewer.displayName}`,
+      publishedAt: viewer.firstSeenAt.toISOString(),
+      metrics: { comments: viewer.commentCount },
+      dropOffs: null,
+      segments: {},
+      comments: [],
+      extra: [self ?? '', ...extra].filter(Boolean),
+    },
+    question,
+  );
+
   await chat.appendMessage(thread.id, 'creator', question, [
     { kind: 'viewer', refId: viewer.ytAuthorId },
     ...toRefs(mentions),
   ]);
 
-  const answer = await ask(
-    {
-      alias,
-        channelTitle: channel.title,
-        ytVideoId: '',
-        title: `the viewer ${viewer.displayName}`,
-        publishedAt: viewer.firstSeenAt.toISOString(),
-        metrics: { comments: viewer.commentCount },
-        dropOffs: null,
-        segments: {},
-        comments: [],
-        extra: [self ?? '', ...extra].filter(Boolean),
-      },
-      question,
-  );
-
-  if (answer.reply) await chat.appendMessage(thread.id, 'mind', answer.reply);
-  return c.json(answer);
+  if (!settled) return c.json({ mindOffline: true, waitingS: null });
+  deliver(thread.id, settled);
+  return c.json({ mindOffline: false, waitingS: 0 });
 });
 
 appRoutes.get('/viewers/:ytAuthorId/chat', async (c) =>
@@ -433,15 +455,22 @@ appRoutes.get('/chats/search', async (c) => {
 
 async function storedChat(channelId: string, kind: 'video' | 'viewer', subjectId: string) {
   const thread = await chat.findThread(channelId, kind, subjectId);
-  if (!thread) return [];
+  if (!thread) return { turns: [], waitingS: null, failed: null };
 
-  await catchUp(thread);
+  const wait = waitOn(thread.id);
+  // a running waiter delivers the reply itself, so asking Minds again on every poll of the
+  // thread is a round trip for nothing
+  if (wait.waitingS === null) await catchUp(thread);
+
   const messages = await chat.threadMessages(thread.id);
-  return messages.map((message) => ({
-    role: message.role,
-    text: message.body,
-    at: message.createdAt,
-  }));
+  return {
+    turns: messages.map((message) => ({
+      role: message.role,
+      text: message.body,
+      at: message.createdAt,
+    })),
+    ...wait,
+  };
 }
 
 /**
@@ -513,7 +542,10 @@ appRoutes.post('/comments/:ytCommentId/draft', async (c) => {
   const target = await repo.commentOwner(channel.id, c.req.param('ytCommentId'));
   if (!target) return c.json({ error: 'comment not found' }, 404);
 
-  const [about] = await resolve(channel, [{ kind: 'viewer', id: (await c.req.json().catch(() => ({}))).ytAuthorId ?? '' }]);
+  const [[about], sent] = await Promise.all([
+    resolve(channel, [{ kind: 'viewer', id: (await c.req.json().catch(() => ({}))).ytAuthorId ?? '' }]),
+    repo.recentReplies(channel.id),
+  ]);
 
   return c.json(
     await ask(
@@ -527,14 +559,30 @@ appRoutes.post('/comments/:ytCommentId/draft', async (c) => {
         dropOffs: null,
         segments: {},
         comments: [],
-        extra: [about ?? '', `COMMENT from ${target.displayName}: ${target.text}`].filter(Boolean),
+        extra: [about ?? '', voiceSamples(sent), `COMMENT from ${target.displayName}: ${target.text}`].filter(Boolean),
       },
-      'Draft a reply I can send as the creator. Match how this channel already talks to ' +
-        'people. One or two sentences, no emoji unless the comment used one, answer the ' +
-        'actual question. Return only the reply text.',
+      'Draft a reply I can send as the creator. One or two sentences, no emoji unless the ' +
+        'comment used one, answer the actual question. Return only the reply text.' +
+        (sent.length ? ' Write it in the voice of the past replies above, not in yours.' : ''),
     ),
   );
 });
+
+/**
+ * "Match how this channel talks" is an instruction the Mind has no way to follow without
+ * examples, and the creator's own sent replies are the only honest source of the voice.
+ */
+function voiceSamples(sent: repo.SentReply[]): string {
+  if (sent.length === 0) return '';
+  return [
+    'REPLIES THE CREATOR HAS ACTUALLY SENT — copy this voice, its length and its punctuation:',
+    ...sent.map(
+      (row) =>
+        `- someone wrote "${row.comment.replace(/\s+/g, ' ').slice(0, 160)}" and they answered ` +
+        `"${row.reply.replace(/\s+/g, ' ').slice(0, 200)}"`,
+    ),
+  ].join('\n');
+}
 
 appRoutes.post('/comments/:ytCommentId/reply', async (c) => {
   if (!repliesEnabled) return c.json({ error: 'replies are switched off' }, 403);
@@ -629,6 +677,7 @@ async function openFromProposal(
     lever: payload.lever,
     hypothesis: concept.hypothesis,
     prediction: concept.prediction,
+    sandbox: proposal.sandbox,
   });
 
   // same path the Mind takes: attaching is what moves it to 'measuring' and starts the clock

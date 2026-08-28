@@ -225,6 +225,14 @@ function ProposalRow({
                   {proposal.videoTitle}
                 </span>
               )}
+              {proposal.viewerYtAuthorId && (
+                <a
+                  href={`#/viewer/${encodeURIComponent(proposal.viewerYtAuthorId)}`}
+                  className={cn(focusRing, 'text-muted-foreground hover:text-primary min-w-0 truncate rounded-md text-xs')}
+                >
+                  {proposal.viewerName}
+                </a>
+              )}
               <span className="text-muted-foreground text-xs">{f.since(proposal.createdAt)}</span>
             </div>
 

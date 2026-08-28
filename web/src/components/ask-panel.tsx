@@ -2,14 +2,14 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { AtSign, ChartSpline, Quote, Send, Sparkles, User, Users, Video, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { api, type AskStage } from '@/lib/api';
-import { useI18n, type Translate } from '@/lib/i18n';
+import { api } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 import { cn, focusRing } from '@/lib/utils';
-import type { Mention, PostComment, Suggestion } from '@/lib/types';
+import type { ChatLog, Mention, PostComment, Suggestion } from '@/lib/types';
 
-// the Mind has answered as late as 153 seconds in; the request gives up long before it does
-const OUTSTANDING_POLL_MS = 8_000;
-const OUTSTANDING_TRIES = 40;
+// the ask returns as soon as the question is on the wire; the answer lands on the thread two
+// to three minutes later, and this is how often the panel looks for it
+const POLL_MS = 5_000;
 
 const ICON: Record<string, typeof User> = {
   viewer: User,
@@ -39,9 +39,8 @@ export function AskPanel({
   fill = false,
 }: {
   subject: {
-    /** `onStage` is optional on purpose: a subject with nothing to report simply never calls it. */
-    ask: (question: string, mentions: Mention[], onStage?: (update: AskStage) => void) => Promise<AskResult>;
-    chat: () => Promise<Turn[]>;
+    ask: (question: string, mentions: Mention[]) => Promise<AskResult>;
+    chat: () => Promise<ChatLog>;
   };
   suggestions: string[];
   /** A question composed elsewhere — a retention drop-off, say — dropped in for editing. */
@@ -58,13 +57,12 @@ export function AskPanel({
   const { t } = useI18n();
   const [question, setQuestion] = useState('');
   const [tagged, setTagged] = useState<Array<Mention & { label: string }>>([]);
-  const [turns, setTurns] = useState<Turn[]>([]);
+  const [log, setLog] = useState<ChatLog>(EMPTY);
   const [pending, setPending] = useState<string | null>(null);
-  const [stage, setStage] = useState<AskStage | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
-    subject.chat().then(setTurns, () => setTurns([]));
+    subject.chat().then(setLog, () => setLog(EMPTY));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -73,52 +71,41 @@ export function AskPanel({
     if (draft) setQuestion(draft);
   }, [draft]);
 
+  const turns = log.turns;
   const busy = pending !== null;
-  // the request timed out but the question did not: the server keeps the conversation and
-  // reconciles a late reply into it, so the panel only has to keep looking
-  const outstanding = !busy && turns.length > 0 && turns.at(-1)!.role === 'creator';
+  const outstanding = log.waitingS !== null;
 
   useEffect(() => {
     if (!outstanding) return;
-    let tries = 0;
 
     const timer = setInterval(() => {
-      tries += 1;
-      if (tries > OUTSTANDING_TRIES) {
-        clearInterval(timer);
-        return;
-      }
-      void subject.chat().then(
-        (next) => next.length > turns.length && setTurns(next),
-        () => undefined,
-      );
-    }, OUTSTANDING_POLL_MS);
+      void subject.chat().then((next) => {
+        setLog(next);
+        // a Mind with no cognition left is not a slow Mind, and telling a creator to wait
+        // longer for an answer that cannot come is the one thing this panel must not do
+        if (next.failed === 'outOfCognition') setNotice(t('ask.outOfCognition'));
+        else if (next.failed === 'timedOut') setNotice(t('ask.slow'));
+      }, () => undefined);
+    }, POLL_MS);
 
     return () => clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [outstanding, turns.length]);
+  }, [outstanding]);
 
   async function send(text: string) {
-    if (text.trim().length < 3 || pending) return;
+    if (text.trim().length < 3 || busy || outstanding) return;
     setQuestion('');
     setNotice(null);
-    setStage(null);
     setPending(text);
     try {
-      const result = await subject.ask(text, tagged.map(({ kind, id }) => ({ kind, id })), setStage);
-      // a Mind with no cognition left is not a slow Mind, and telling a creator to wait
-      // longer for an answer that cannot come is the one thing this panel must not do
-      if (result.outOfCognition) setNotice(t('ask.outOfCognition'));
-      else if (result.mindOffline) setNotice(t('ask.offline'));
-      else if (result.timedOut) setNotice(t('ask.slow'));
-      else if (result.reply == null) setNotice(t('ask.noAnswer'));
+      const result = await subject.ask(text, tagged.map(({ kind, id }) => ({ kind, id })));
+      if (result.mindOffline) setNotice(t('ask.offline'));
       setTagged([]);
-      setTurns(await subject.chat());
+      setLog(await subject.chat());
     } catch {
       setNotice(t('state.error'));
     } finally {
       setPending(null);
-      setStage(null);
     }
   }
 
@@ -149,7 +136,9 @@ export function AskPanel({
       {(busy || outstanding) && (
         <div className="bg-muted text-muted-foreground flex max-w-[85%] items-center gap-3 rounded-2xl px-4 py-3 text-[15px]">
           <Typing />
-          <span>{busy ? said(stage, t) : t('ask.stillComing')}</span>
+          <span>
+            {log.waitingS === null ? t('ask.thinking') : t('ask.waiting', { s: log.waitingS })}
+          </span>
         </div>
       )}
     </div>
@@ -185,7 +174,7 @@ export function AskPanel({
       tagged={tagged}
       setTagged={setTagged}
       onSend={send}
-      busy={busy}
+      busy={busy || outstanding}
       autoFocus={autoFocus}
     />
   );
@@ -318,24 +307,9 @@ function Typing() {
   );
 }
 
-export type Turn = { role: 'creator' | 'mind'; text: string };
-export type AskResult = {
-  reply?: string | null;
-  timedOut: boolean;
-  /** No Mind configured at all. */
-  mindOffline?: boolean;
-  /** Configured, but with nothing left to think with. */
-  outOfCognition?: boolean;
-};
+const EMPTY: ChatLog = { turns: [], waitingS: null, failed: null };
 
-/** No token stream to render, so the wait reports which step is running. */
-function said(stage: AskStage | null, t: Translate): string {
-  if (stage?.stage === 'reading') return t('ask.stageReading');
-  if (stage?.stage === 'briefed') return t('ask.stageBriefed', { n: stage.comments });
-  if (stage?.stage === 'sent') return t('ask.stageSent');
-  if (stage?.stage === 'waiting') return t('ask.stageWaiting', { s: stage.elapsedS });
-  return t('ask.thinking');
-}
+export type AskResult = { mindOffline: boolean; waitingS: number | null };
 
 function Composer({
   question,

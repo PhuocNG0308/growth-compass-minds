@@ -74,6 +74,21 @@ banner. It brings the next checkpoint forward and runs it through the same path 
 uses; the only thing skipped is the wait. The Mind is briefed, reads the numbers, and its
 proposal lands in the Inbox.
 
+### Sandbox Studio
+
+Fast-forward is one of several states that otherwise take a day to arrive. **Sandbox Studio**
+— the floating control on the sample channel, `DEMO_MODE=on` only — holds the rest:
+
+| Tab | What it does |
+|---|---|
+| **Time** | Fires the next checkpoint, puts a simulated stream on the feed, or resets the run — every decided proposal back to pending and everything the sandbox added deleted |
+| **Mind** | Holds the Mind at *out of cognition*, *offline* or *too slow*, so the three failure paths can be shown instead of described |
+| **Data** | Adds people commenting on a chosen video — questions, criticism or regulars, who arrive with the comment history that earns them the tier — and pushes a proposal straight into the Inbox with the figures you type |
+
+Nothing here reaches YouTube. Rows the sandbox writes are marked in the database, so a reset
+is an exact delete rather than a guess; rebuilding the channel itself is still
+`npm run seed:demo`.
+
 ## What is real and what is modelled
 
 The sample channel mirrors a real one — [Hardware Haven](https://www.youtube.com/@HardwareHaven)

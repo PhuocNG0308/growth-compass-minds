@@ -181,7 +181,7 @@ export function MobilePost({
         <AskPanel
           fill
           subject={{
-            ask: (question, mentions, onStage) => api.ask(ytVideoId, question, mentions, onStage),
+            ask: (question, mentions) => api.ask(ytVideoId, question, mentions),
             chat: () => api.chat(ytVideoId),
           }}
           suggestions={askSuggestions(video.data)}

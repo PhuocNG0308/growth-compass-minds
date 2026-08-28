@@ -16,6 +16,10 @@ import { cn, focusRing } from '@/lib/utils';
 
 const SUGGESTIONS = ['ask.viewerWho', 'ask.viewerKeep', 'ask.viewerIdea'];
 
+// positive to negative, in a fixed order, so two profiles can be compared at a glance.
+// `answered` is left out: it records that the creator replied, not how the viewer sounded.
+const TONES = ['superfan', 'question', 'criticism', 'noise'] as const;
+
 export function ViewerProfile({ ytAuthorId }: { ytAuthorId: string }) {
   const { t, plural } = useI18n();
   const f = useFormat();
@@ -27,6 +31,9 @@ export function ViewerProfile({ ytAuthorId }: { ytAuthorId: string }) {
   if (error || !data) return <Failed onRetry={() => setRound((n) => n + 1)} />;
 
   const { viewer, comments } = data;
+  const tone = TONES.map(
+    (kind) => [kind, comments.filter((comment) => comment.triage === kind).length] as const,
+  ).filter(([, n]) => n > 0);
 
   return (
     <>
@@ -61,6 +68,25 @@ export function ViewerProfile({ ytAuthorId }: { ytAuthorId: string }) {
           { value: viewer.tenureDays, label: t('viewer.tenureDays') },
         ]}
       />
+
+      {tone.length > 0 && (
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <span className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+            {t('viewer.tone')}
+          </span>
+          {tone.map(([kind, n]) => (
+            <Badge
+              key={kind}
+              variant="secondary"
+              // the one thing colour is for here: a regular who keeps arguing reads the same
+              // as a regular who keeps cheering until something separates them
+              className={cn('font-normal', kind === 'criticism' && 'text-warning')}
+            >
+              {plural(`tone.${kind}`, n)}
+            </Badge>
+          ))}
+        </div>
+      )}
 
       <Button variant="outline" className="mt-4" onClick={() => setAsk(true)}>
         <Sparkles />

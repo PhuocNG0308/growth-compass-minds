@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Bot, CircleCheck, FlaskConical, Scale, Sparkles, Timer, User } from 'lucide-react';
+import { Bot, CircleCheck, FlaskConical, Scale, Sparkles, Timer, User, UserPlus } from 'lucide-react';
 import { Disclosure, Empty, Failed, Group, Skeletons, Stat, Strip, StripItem } from '@/mobile/kit';
 import { api } from '@/lib/api';
 import { DASH, useFormat } from '@/lib/format';
@@ -20,6 +20,7 @@ const ICONS: Record<string, typeof Timer> = {
   proposal_decided: CircleCheck,
   chat_creator: User,
   chat_mind: Bot,
+  viewer_crossed: UserPlus,
 };
 
 export function MobileMemory() {
@@ -182,6 +183,9 @@ function headline(event: TimelineEvent, f: Fmt, t: T): string {
     return t(detail.status === 'approved' ? 'memory.approved' : 'memory.dismissed');
   }
   if (event.kind === 'tenet_written') return t('memory.tenet');
+  if (event.kind === 'viewer_crossed') {
+    return t('memory.crossed', { segment: t(`segment.${String(detail.segment)}`) });
+  }
   return t(event.kind === 'chat_mind' ? 'memory.mindSaid' : 'memory.youAsked');
 }
 
@@ -209,6 +213,9 @@ function body(event: TimelineEvent, f: Fmt, t: T): string {
   if (event.kind.startsWith('chat_')) return (detail.excerpt as string | null) ?? DASH;
   if (event.kind === 'tenet_written') {
     return `${event.title} — ${t('memory.evidence', { n: String(detail.evidenceCount ?? 0) })}`;
+  }
+  if (event.kind === 'viewer_crossed') {
+    return `${event.title} — ${t('memory.crossedComments', { n: String(detail.commentCount ?? 0) })}`;
   }
   return event.title;
 }

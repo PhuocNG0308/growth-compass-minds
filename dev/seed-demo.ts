@@ -52,27 +52,38 @@ function audience(): string[] {
   return [...NAMES, ...generated];
 }
 
-const COMMENTS = [
-  'What is the part you used at 6:40? You never said and I have watched this three times looking for it.',
-  'The first two minutes are you explaining what you are about to do. Just do it.',
-  'Please do a follow-up on this one in a year. Did it hold up?',
-  'Came for the rant, stayed for the spreadsheet. More of the spreadsheet please.',
-  'New here. Algorithm sent me and I stayed.',
-  'No way this works long term, but I want to be proved wrong.',
-  'Finally someone measured it instead of guessing.',
-  'I bought the cheap one on your advice and it has been fine for eight months.',
-  'The bit at the end where you admit it did not work is why I subscribe.',
-  'Could you show the inside? That is the part nobody films.',
-  'This is the third video where you mention it in passing. Just review it already.',
-  'Disagree on this one. Mine was worth every penny.',
-  'Watched at 2x and still got everything. Good pacing.',
-  'What is the actual model number? The description does not say.',
-  'You have talked me out of buying something for the fourth time. Thank you.',
-  'The lighting in this one looks noticeably better than the last.',
-  'Honestly the intro music is too loud compared to your voice.',
-  'Came back to say I did this and it took me two hours, not forty minutes.',
-  'Any chance of a version of this for a smaller budget?',
-  'The price comparison at 4:10 is the most useful thing on this channel.',
+// On a live channel the Mind tags tone through /v1/comments/{id}/triage. The sample channel
+// carries the tag beside each line so a viewer profile reads correctly before a Mind has run.
+const COMMENTS: ReadonlyArray<readonly [text: string, tone: 'question' | 'criticism' | 'superfan']> = [
+  ['What is the part you used at 6:40? You never said and I have watched this three times looking for it.', 'question'],
+  ['The first two minutes are you explaining what you are about to do. Just do it.', 'criticism'],
+  ['Please do a follow-up on this one in a year. Did it hold up?', 'question'],
+  ['Came for the rant, stayed for the spreadsheet. More of the spreadsheet please.', 'superfan'],
+  ['New here. Algorithm sent me and I stayed.', 'superfan'],
+  ['No way this works long term, but I want to be proved wrong.', 'criticism'],
+  ['Finally someone measured it instead of guessing.', 'superfan'],
+  ['I bought the cheap one on your advice and it has been fine for eight months.', 'superfan'],
+  ['The bit at the end where you admit it did not work is why I subscribe.', 'superfan'],
+  ['Could you show the inside? That is the part nobody films.', 'question'],
+  ['This is the third video where you mention it in passing. Just review it already.', 'criticism'],
+  ['Disagree on this one. Mine was worth every penny.', 'criticism'],
+  ['Watched at 2x and still got everything. Good pacing.', 'superfan'],
+  ['What is the actual model number? The description does not say.', 'question'],
+  ['You have talked me out of buying something for the fourth time. Thank you.', 'superfan'],
+  ['The lighting in this one looks noticeably better than the last.', 'superfan'],
+  ['Honestly the intro music is too loud compared to your voice.', 'criticism'],
+  ['Came back to say I did this and it took me two hours, not forty minutes.', 'criticism'],
+  ['Any chance of a version of this for a smaller budget?', 'question'],
+  ['The price comparison at 4:10 is the most useful thing on this channel.', 'superfan'],
+];
+
+// One canned line would teach a draft nothing about how this creator writes.
+const REPLIES = [
+  'Good spot — it is in the description now.',
+  'Fair. The intro is getting shorter from the next one.',
+  'Model number is in the description now, sorry for missing it.',
+  'Two hours sounds about right if you are doing it properly.',
+  'Noted, the spreadsheet is coming back.',
 ];
 
 const HYPOTHESES = [
@@ -177,7 +188,7 @@ async function seedComments(channelId: string, videos: SeededVideo[]) {
         displayName: person.displayName,
         ytCommentId: `demo-comment-${(serial += 1).toString().padStart(4, '0')}`,
         videoId: video.id,
-        text: pick(COMMENTS),
+        text: pick(COMMENTS)[0],
         likeCount: Math.round(between(0, 70)),
         // comments trail the upload, but a video published two days ago cannot have
         // comments from next week
@@ -190,17 +201,28 @@ async function seedComments(channelId: string, videos: SeededVideo[]) {
 
   await repo.upsertComments(channelId, batch);
 
+  for (const tone of ['question', 'criticism', 'superfan'] as const) {
+    const texts = COMMENTS.filter(([, kind]) => kind === tone).map(([text]) => text);
+    await sql`
+      update comments set triage = ${tone}
+      from videos v
+      where v.id = comments.video_id and v.channel_id = ${channelId}
+        and comments.text = any(${texts})`;
+  }
+
   // a few already answered, so the reply queue is not the whole comment list
   await sql`
-    update comments set replied_at = least(now(), published_at + interval '6 hours'),
-                        reply_text = 'Good spot — it is in the description now.',
-                        triage = 'answered'
-    where yt_comment_id in (
-      select c.yt_comment_id from comments c
-        join videos v on v.id = c.video_id
+    with answered as (
+      select c.yt_comment_id, row_number() over (order by c.published_at desc) as seat
+      from comments c join videos v on v.id = c.video_id
       where v.channel_id = ${channelId}
       order by c.published_at desc offset 8 limit 40
-    )`;
+    )
+    update comments c
+    set replied_at = least(now(), c.published_at + interval '6 hours'),
+        reply_text = (${REPLIES}::text[])[1 + (a.seat % ${REPLIES.length})],
+        triage = 'answered'
+    from answered a where a.yt_comment_id = c.yt_comment_id`;
 }
 
 async function seedExperiments(channelId: string, videos: SeededVideo[]) {

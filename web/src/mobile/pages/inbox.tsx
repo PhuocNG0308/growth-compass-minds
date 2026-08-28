@@ -139,6 +139,16 @@ function ProposalCard({ proposal, onDecide }: { proposal: Proposal; onDecide: De
         <p className="text-muted-foreground mt-2 truncate px-4 text-xs">{proposal.videoTitle}</p>
       )}
 
+      {proposal.viewerYtAuthorId && (
+        <a
+          href={`#/viewer/${encodeURIComponent(proposal.viewerYtAuthorId)}`}
+          // 44px is the tap target, not a spacing choice
+          className={cn(focusRing, 'text-muted-foreground mt-1 flex min-h-11 items-center truncate px-4 text-xs')}
+        >
+          {proposal.viewerName}
+        </a>
+      )}
+
       <h3 className="mt-1 px-4 leading-snug font-medium text-pretty">{proposal.summary}</h3>
       <p className="text-muted-foreground mt-1 px-4 text-sm text-pretty">{proposal.detail}</p>
 

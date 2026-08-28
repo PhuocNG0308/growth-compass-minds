@@ -1,4 +1,5 @@
 import { cognition, conversation, mindEnabled, refreshCognition } from './client.ts';
+import { sandbox, sandboxEnabled } from '../sandbox.ts';
 
 export type AskContext = {
   /** Conversation to speak into; defaults to one per video. */
@@ -52,21 +53,8 @@ function brief(context: AskContext, question: string): string {
   ].join('\n');
 }
 
-/**
- * The Mind answers in one finished message — there is no token stream to forward — so what a
- * caller can be told while it waits is which step is running, and for how long.
- */
-export type AskStage =
-  | { stage: 'reading' }
-  | { stage: 'briefed'; comments: number }
-  | { stage: 'sent' }
-  | { stage: 'waiting'; elapsedS: number };
-
-export type OnStage = (update: AskStage) => void;
-
-const HEARTBEAT_MS = 5_000;
-
-// measured replies have taken 135-153s, so the old 150s ceiling was inside the normal range
+// measured replies have taken 135-163s regardless of how long the briefing is, so the wait
+// is the platform's, not ours: a caller gets the alias now and the answer minutes later
 const REPLY_TIMEOUT_MS = 240_000;
 
 export type AskOutcome = {
@@ -79,43 +67,70 @@ export type AskOutcome = {
   outOfCognition?: boolean;
 };
 
+export type Handoff = {
+  alias: string;
+  /** Null when nothing was sent: no key, or the sandbox is holding the Mind offline. */
+  settled: Promise<AskOutcome> | null;
+};
+
+type Client = Awaited<ReturnType<typeof conversation>>['client'];
+
+// long enough to read as a real wait, short enough to sit through on stage
+const SIMULATED_WAIT_MS = 24_000;
+
+/**
+ * The sandbox holds the Mind in a state the demo could not otherwise reach. Offline and
+ * out-of-cognition both end in silence, and the difference between them is the whole reason
+ * the app says which one happened.
+ */
+async function simulate(alias: string, held: string): Promise<AskOutcome> {
+  await new Promise((done) => setTimeout(done, SIMULATED_WAIT_MS));
+  return { alias, reply: null, timedOut: true, outOfCognition: held === 'empty' };
+}
+
+async function awaitReply(
+  client: Client,
+  alias: string,
+  since: string | undefined,
+  timeoutMs: number,
+): Promise<AskOutcome> {
+  const outcome = await client.waitForReply({ alias, timeoutMs, afterFingerprint: since });
+  if (!outcome.timedOut) {
+    return { alias, reply: plain(outcome.reply.messageText ?? ''), timedOut: false };
+  }
+
+  // say whether an empty balance is why the wait ran out
+  await refreshCognition();
+  const balance = cognition();
+  return { alias, reply: null, timedOut: true, outOfCognition: balance != null && balance <= 0 };
+}
+
+/** Returns once the question is on the wire, which takes about two seconds. */
+export async function send(
+  context: AskContext,
+  question: string,
+  timeoutMs = REPLY_TIMEOUT_MS,
+): Promise<Handoff> {
+  const alias = aliasFor(context.alias ?? `post-${context.ytVideoId}`);
+  const held = sandboxEnabled ? sandbox().mind : 'normal';
+  if (held === 'offline' || !mindEnabled) return { alias, settled: null };
+  if (held !== 'normal') return { alias, settled: simulate(alias, held) };
+
+  const { client } = await conversation(alias);
+  const since = await client.getLatestHistoryFingerprint(alias).catch(() => undefined);
+  await client.sendMessage({ alias, messageText: brief(context, question) });
+
+  return { alias, settled: awaitReply(client, alias, since, timeoutMs) };
+}
+
+/** For the callers with nowhere to deliver a late answer to. */
 export async function ask(
   context: AskContext,
   question: string,
   timeoutMs = REPLY_TIMEOUT_MS,
-  onStage?: OnStage,
 ): Promise<AskOutcome> {
-  const alias = aliasFor(context.alias ?? `post-${context.ytVideoId}`);
-  if (!mindEnabled) return { alias, reply: null, timedOut: false, mindOffline: true };
-
-  const { client } = await conversation(alias);
-  const messageText = brief(context, question);
-  const since = await client.getLatestHistoryFingerprint(alias).catch(() => undefined);
-
-  await client.sendMessage({ alias, messageText });
-  onStage?.({ stage: 'sent' });
-
-  const started = Date.now();
-  const beat = onStage
-    ? setInterval(
-        () => onStage({ stage: 'waiting', elapsedS: Math.round((Date.now() - started) / 1000) }),
-        HEARTBEAT_MS,
-      )
-    : null;
-
-  try {
-    const outcome = await client.waitForReply({ alias, timeoutMs, afterFingerprint: since });
-    if (!outcome.timedOut) {
-      return { alias, reply: plain(outcome.reply.messageText ?? ''), timedOut: false };
-    }
-
-    // say whether an empty balance is why the wait ran out
-    await refreshCognition();
-    const balance = cognition();
-    return { alias, reply: null, timedOut: true, outOfCognition: balance != null && balance <= 0 };
-  } finally {
-    if (beat) clearInterval(beat);
-  }
+  const { alias, settled } = await send(context, question, timeoutMs);
+  return settled ?? { alias, reply: null, timedOut: false, mindOffline: true };
 }
 
 /** The wire carries the whole briefing; the creator should only ever see their question. */

@@ -211,6 +211,10 @@ export const openapi = {
                 properties: {
                   channelId: { type: 'string' },
                   ytVideoId: { type: 'string' },
+                  ytAuthorId: {
+                    type: 'string',
+                    description: 'The viewer this proposal is about, so the creator can open their profile from the card',
+                  },
                   kind: { type: 'string', enum: [...PROPOSAL_KINDS] },
                   summary: { type: 'string', maxLength: 140, description: 'One line the creator reads first' },
                   detail: { type: 'string', description: 'The exact copy or change you propose' },

@@ -52,6 +52,8 @@ export type Experiment = {
   status: 'open' | 'measuring' | 'closed' | 'abandoned';
   outcome: Record<string, Json> | null;
   verdict: 'confirmed' | 'refuted' | 'inconclusive' | null;
+  /** Written by the demo sandbox, and deleted when it is reset. */
+  sandbox: boolean;
   openedAt: Date;
   closedAt: Date | null;
 };
@@ -109,6 +111,7 @@ export type Proposal = {
   options: string[];
   payload: ExperimentPayload | null;
   status: 'pending' | 'approved' | 'dismissed';
+  sandbox: boolean;
   decidedAt: Date | null;
   decidedChoice: string | null;
   createdAt: Date;

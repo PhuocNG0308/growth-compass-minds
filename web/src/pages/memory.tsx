@@ -7,6 +7,7 @@ import {
   Sparkles,
   Timer,
   User,
+  UserPlus,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Chips, Empty, Failed, List, Loading, SectionTitle } from '@/components/shell';
@@ -32,6 +33,7 @@ const ICONS: Record<string, typeof Timer> = {
   proposal_decided: CircleCheck,
   chat_creator: User,
   chat_mind: Bot,
+  viewer_crossed: UserPlus,
 };
 
 export function Memory() {
@@ -197,6 +199,9 @@ function headline(event: TimelineEvent, f: Fmt, t: T): string {
     return t(detail.status === 'approved' ? 'memory.approved' : 'memory.dismissed');
   }
   if (event.kind === 'tenet_written') return t('memory.tenet');
+  if (event.kind === 'viewer_crossed') {
+    return t('memory.crossed', { segment: t(`segment.${String(detail.segment)}`) });
+  }
   return t(event.kind === 'chat_mind' ? 'memory.mindSaid' : 'memory.youAsked');
 }
 
@@ -230,6 +235,10 @@ function body(event: TimelineEvent, f: Fmt, t: T): string {
 
   if (event.kind === 'tenet_written') {
     return `${event.title} — ${t('memory.evidence', { n: String(detail.evidenceCount ?? 0) })}`;
+  }
+
+  if (event.kind === 'viewer_crossed') {
+    return `${event.title} — ${t('memory.crossedComments', { n: String(detail.commentCount ?? 0) })}`;
   }
 
   return event.title;
